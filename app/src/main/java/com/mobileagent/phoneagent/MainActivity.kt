@@ -26,11 +26,13 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
+import com.mobileagent.phoneagent.agent.AgentSessionCoordinator
 import com.mobileagent.phoneagent.agent.Mode
 import com.mobileagent.phoneagent.agent.PhoneAgent
 import com.mobileagent.phoneagent.databinding.ActivityMainBinding
 import com.mobileagent.phoneagent.model.ModelClient
 import com.mobileagent.phoneagent.service.AgentForegroundService
+import com.mobileagent.phoneagent.service.FloatingOverlayService
 import com.mobileagent.phoneagent.service.PhoneAgentAccessibilityService
 import kotlinx.coroutines.launch
 
@@ -46,6 +48,7 @@ class MainActivity : AppCompatActivity() {
         private const val REQUEST_CODE_NOTIFICATION = 102
         private const val REQUEST_CODE_VOICE_INPUT = 103
         private const val REQUEST_CODE_AUDIO = 104
+        private const val REQUEST_CODE_OVERLAY = 105
     }
     
     private var isVoiceInputActive = false
@@ -92,6 +95,10 @@ class MainActivity : AppCompatActivity() {
         } else {
             binding.tvStatus.text = "无障碍服务已启用"
             binding.btnSettings.visibility = View.GONE
+        }
+
+        if (!Settings.canDrawOverlays(this)) {
+            binding.tvStatus.append(" | 建议开启悬浮窗权限")
         }
 
         // Android 13+ 需要请求通知权限
@@ -271,6 +278,9 @@ class MainActivity : AppCompatActivity() {
                     isVoiceInputActive = false
                     stopVADDetection()
             }
+            REQUEST_CODE_OVERLAY -> {
+                checkPermissions()
+            }
         }
     }
 
@@ -296,6 +306,16 @@ class MainActivity : AppCompatActivity() {
         if (!isAccessibilityServiceEnabled()) {
             Toast.makeText(this, "请先启用无障碍服务", Toast.LENGTH_LONG).show()
             openAccessibilitySettings()
+            return
+        }
+
+        if (!Settings.canDrawOverlays(this)) {
+            Toast.makeText(this, "请先授予悬浮窗权限以显示任务状态", Toast.LENGTH_LONG).show()
+            val intent = Intent(
+                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                android.net.Uri.parse("package:$packageName")
+            )
+            startActivityForResult(intent, REQUEST_CODE_OVERLAY)
             return
         }
 
@@ -415,6 +435,19 @@ class MainActivity : AppCompatActivity() {
                 runOnUiThread {
                     updateStepInfo(stepResult)
                 }
+                val overlayStatus = when {
+                    stepResult.action == "分析中..." -> "AI 分析中"
+                    stepResult.message == "正在执行操作..." -> "执行操作中"
+                    stepResult.finished -> "任务完成"
+                    stepResult.success -> "步骤成功"
+                    else -> "步骤失败"
+                }
+                FloatingOverlayService.update(
+                    context = this,
+                    status = overlayStatus,
+                    detail = stepResult.message ?: stepResult.thinking.take(120),
+                    task = task
+                )
                 // 增强通知显示：显示每一步的详细信息
                 val notificationContent = buildNotificationContent(stepResult, currentStepCount)
                 updateNotification(notificationContent)
@@ -424,6 +457,13 @@ class MainActivity : AppCompatActivity() {
             onUserInterventionCallback = { message ->
                 // 显示用户介入通知
                 showUserInterventionNotification(message)
+                FloatingOverlayService.update(
+                    context = this,
+                    status = "等待用户处理",
+                    detail = message,
+                    task = task,
+                    interactionRequired = true
+                )
             }
         )
 
@@ -433,6 +473,18 @@ class MainActivity : AppCompatActivity() {
         binding.tvStatus.text = "任务执行中（后台运行）..."
         binding.tvLog.text = ""
         resetStepCount()
+
+        AgentSessionCoordinator.register(task) {
+            runOnUiThread {
+                stopTask()
+            }
+        }
+        FloatingOverlayService.show(
+            context = this,
+            status = "任务启动中",
+            detail = "正在初始化代理与权限",
+            task = task
+        )
 
         // 运行任务
         appendLog("🚀 开始执行任务: $task")
@@ -463,6 +515,8 @@ class MainActivity : AppCompatActivity() {
                 android.util.Log.d("MainActivity", "任务完成，清理 MediaProjection，下次启动时将重新请求权限")
                 mediaProjection = null
                 phoneAgent = null // 清理 Agent 实例
+                AgentSessionCoordinator.clear()
+                FloatingOverlayService.hide(this@MainActivity)
             }
             // 停止前台服务
             val stopIntent = Intent(this, AgentForegroundService::class.java).apply {
@@ -475,6 +529,8 @@ class MainActivity : AppCompatActivity() {
     private fun stopTask() {
         phoneAgent?.stop()
         phoneAgent = null
+        AgentSessionCoordinator.clear()
+        FloatingOverlayService.hide(this)
         
         // 停止前台服务
         val stopIntent = Intent(this, AgentForegroundService::class.java).apply {
@@ -910,4 +966,3 @@ class MainActivity : AppCompatActivity() {
         stopVADDetection()
     }
 }
-

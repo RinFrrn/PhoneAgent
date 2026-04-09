@@ -14,6 +14,7 @@ import android.content.Context
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.util.Log
+import com.mobileagent.phoneagent.skill.SkillRegistry
 
 /**
  * 应用启动器 - 通过系统动态获取应用信息
@@ -29,6 +30,17 @@ object AppLauncher {
      * 支持精确匹配和模糊匹配
      */
     fun getPackageName(context: Context, appName: String): String? {
+        val candidateNames = SkillRegistry.expandLaunchCandidates(appName)
+        candidateNames.forEach { candidate ->
+            val packageName = getPackageNameInternal(context, candidate)
+            if (packageName != null) {
+                return packageName
+            }
+        }
+        return null
+    }
+
+    private fun getPackageNameInternal(context: Context, appName: String): String? {
         // 先检查缓存
         val cacheKey = appName.lowercase().trim()
         if (appNameCache.containsKey(cacheKey)) {
@@ -180,4 +192,3 @@ object AppLauncher {
         Log.d(TAG, "应用名称缓存已清除")
     }
 }
-

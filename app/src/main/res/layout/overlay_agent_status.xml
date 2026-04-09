@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="280dp"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:background="#CC102A43"
+    android:elevation="8dp"
+    android:padding="14dp">
+
+    <TextView
+        android:id="@+id/tvOverlayStatus"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="等待任务"
+        android:textColor="@android:color/white"
+        android:textSize="16sp"
+        android:textStyle="bold" />
+
+    <TextView
+        android:id="@+id/tvOverlayTask"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:maxLines="2"
+        android:text="任务"
+        android:textColor="#D8E6F2"
+        android:textSize="12sp" />
+
+    <TextView
+        android:id="@+id/tvOverlayDetail"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:maxLines="5"
+        android:text="详情"
+        android:textColor="#F5F7FA"
+        android:textSize="12sp" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
+        android:orientation="horizontal">
+
+        <Button
+            android:id="@+id/btnOverlayOpen"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="打开"
+            android:textAllCaps="false" />
+
+        <Button
+            android:id="@+id/btnOverlayConfirm"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:layout_weight="1"
+            android:text="已处理"
+            android:textAllCaps="false"
+            android:visibility="gone" />
+
+        <Button
+            android:id="@+id/btnOverlayStop"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:layout_weight="1"
+            android:text="停止"
+            android:textAllCaps="false" />
+    </LinearLayout>
+</LinearLayout>

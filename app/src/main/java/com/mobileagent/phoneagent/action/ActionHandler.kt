@@ -17,8 +17,6 @@ import com.mobileagent.phoneagent.utils.AppLauncher
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeout
-import org.json.JSONArray
-import org.json.JSONObject
 
 /**
  * 操作执行器 - 执行 AI 模型返回的操作指令
@@ -27,6 +25,7 @@ class ActionHandler(
     private val accessibilityService: PhoneAgentAccessibilityService
 ) {
     private val TAG = "ActionHandler"
+    private val actionParser = ActionParser()
     
     init {
         Log.d(TAG, "ActionHandler 已初始化")
@@ -42,7 +41,7 @@ class ActionHandler(
         Log.d(TAG, "屏幕尺寸: ${screenWidth}x${screenHeight}")
         
         return try {
-            val action = parseAction(actionJson)
+            val action = actionParser.parse(actionJson)
             Log.d(TAG, "操作类型: ${action::class.simpleName}")
             val result = executeAction(action, screenWidth, screenHeight)
             Log.d(TAG, "✅ 操作执行完成: success=${result.success}, finished=${result.shouldFinish}")
@@ -72,109 +71,6 @@ class ActionHandler(
         val absoluteX = (relativeX / 1000.0 * screenWidth).toInt()
         val absoluteY = (relativeY / 1000.0 * screenHeight).toInt()
         return Pair(absoluteX, absoluteY)
-    }
-
-    /**
-     * 解析操作 JSON
-     */
-    private fun parseAction(actionJson: String): Action {
-        val json = JSONObject(actionJson)
-        val metadata = json.optString("_metadata", "")
-
-        return when (metadata) {
-            "finish" -> {
-                FinishAction(json.optString("message", ""))
-            }
-            "do" -> {
-                val actionType = json.optString("action", "")
-                when (actionType) {
-                    "Tap", "Click" -> {
-                        // 支持数组格式: [x, y]（相对坐标 0-1000）
-                        val elementArray = json.optJSONArray("element")
-                        // 支持字符串格式: "x, y"
-                        val elementString = json.optString("element", "")
-                        
-                        val (x, y) = if (elementArray != null) {
-                            Pair(elementArray.optInt(0), elementArray.optInt(1))
-                        } else if (elementString.isNotEmpty()) {
-                            // 解析字符串格式 "x, y" 或 "x,y"
-                            val coords = elementString.split(",").map { it.trim().toIntOrNull() ?: 0 }
-                            Pair(coords.getOrElse(0) { 0 }, coords.getOrElse(1) { 0 })
-                        } else {
-                            Pair(0, 0)
-                        }
-                        
-                        Log.d(TAG, "解析点击坐标（相对）: ($x, $y)")
-                        TapAction(
-                            x = x, // 保存相对坐标，在执行时转换
-                            y = y,
-                            message = json.optString("message")
-                        )
-                    }
-                    "Type", "Type_Name" -> {
-                        TypeAction(json.optString("text", ""))
-                    }
-                    "Swipe" -> {
-                        val start = json.optJSONArray("start")
-                        val end = json.optJSONArray("end")
-                        SwipeAction(
-                            startX = start?.optInt(0) ?: 0, // 相对坐标
-                            startY = start?.optInt(1) ?: 0,
-                            endX = end?.optInt(0) ?: 0,
-                            endY = end?.optInt(1) ?: 0
-                        )
-                    }
-                    "Long Press" -> {
-                        val element = json.optJSONArray("element")
-                        LongPressAction(
-                            x = element?.optInt(0) ?: 0, // 相对坐标
-                            y = element?.optInt(1) ?: 0
-                        )
-                    }
-                    "Double Tap" -> {
-                        val element = json.optJSONArray("element")
-                        DoubleTapAction(
-                            x = element?.optInt(0) ?: 0, // 相对坐标
-                            y = element?.optInt(1) ?: 0
-                        )
-                    }
-                    "Note" -> {
-                        NoteAction(json.optString("message", "True"))
-                    }
-                    "Call_API" -> {
-                        CallAPIAction(json.optString("instruction", ""))
-                    }
-                    "Interact" -> {
-                        InteractAction
-                    }
-                    "Launch" -> {
-                        LaunchAction(json.optString("app", ""))
-                    }
-                    "Back" -> BackAction
-                    "Home" -> HomeAction
-                    "Wait" -> {
-                        val duration = json.optString("duration", "1 seconds")
-                        WaitAction(parseDuration(duration))
-                    }
-                    "Take_over" -> {
-                        TakeOverAction(json.optString("message", ""))
-                    }
-                    "Note" -> {
-                        NoteAction(json.optString("message", "True"))
-                    }
-                    "Call_API" -> {
-                        CallAPIAction(json.optString("instruction", ""))
-                    }
-                    "Interact" -> {
-                        InteractAction
-                    }
-                    else -> {
-                        UnknownAction(actionType)
-                    }
-                }
-            }
-            else -> UnknownAction(metadata)
-        }
     }
 
     /**
@@ -477,18 +373,6 @@ class ActionHandler(
         }
     }
 
-    /**
-     * 解析等待时长
-     */
-    private fun parseDuration(duration: String): Long {
-        val regex = """(\d+)\s*(seconds?|秒)""".toRegex(RegexOption.IGNORE_CASE)
-        val match = regex.find(duration)
-        return if (match != null) {
-            match.groupValues[1].toLongOrNull()?.times(1000) ?: 1000
-        } else {
-            1000
-        }
-    }
 }
 
 /**
@@ -526,4 +410,3 @@ data class NoteAction(val message: String) : Action()
 data class CallAPIAction(val instruction: String) : Action()
 object InteractAction : Action()
 data class UnknownAction(val type: String) : Action()
-
