@@ -18,6 +18,14 @@ enum class ModelProvider(
     val imageFormat: ImageFormat,
     val responseFormat: ResponseFormat
 ) {
+    MIMO(
+        displayName = "MOMO (小米AI)",
+        defaultBaseUrl = "https://api.xiaomimimo.com/v1",
+        defaultModelName = "mimo-v2-pro",
+        requiresApiKey = true,
+        imageFormat = ImageFormat.BASE64,
+        responseFormat = ResponseFormat.OPENAI_COMPATIBLE
+    ),
     OLLAMA(
         displayName = "Ollama",
         defaultBaseUrl = "http://127.0.0.1:11434/v1",

@@ -30,7 +30,7 @@ object AppLauncher {
      * 支持精确匹配和模糊匹配
      */
     fun getPackageName(context: Context, appName: String): String? {
-        val candidateNames = SkillRegistry.expandLaunchCandidates(appName)
+        val candidateNames = SkillRegistry.expandLaunchCandidates(context, appName)
         candidateNames.forEach { candidate ->
             val packageName = getPackageNameInternal(context, candidate)
             if (packageName != null) {

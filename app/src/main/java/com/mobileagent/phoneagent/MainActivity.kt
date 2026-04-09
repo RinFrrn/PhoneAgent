@@ -13,6 +13,7 @@ package com.mobileagent.phoneagent
 
 import android.Manifest
 import android.accessibilityservice.AccessibilityServiceInfo
+import android.view.accessibility.AccessibilityManager
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -85,20 +86,53 @@ class MainActivity : AppCompatActivity() {
         binding.btnVoiceInput.setOnClickListener {
             startVoiceInput()
         }
+
+        binding.btnAccessibilityPermission.setOnClickListener {
+            openAccessibilitySettings()
+        }
+
+        binding.btnScreenCapturePermission.setOnClickListener {
+            requestScreenCapturePermission()
+        }
+
+        binding.btnOverlayPermission.setOnClickListener {
+            val intent = Intent(
+                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                android.net.Uri.parse("package:$packageName")
+            )
+            startActivityForResult(intent, REQUEST_CODE_OVERLAY)
+        }
     }
 
     private fun checkPermissions() {
-        // 检查无障碍服务
-        if (!isAccessibilityServiceEnabled()) {
-            binding.tvStatus.text = "请先启用无障碍服务"
-            binding.btnSettings.visibility = View.VISIBLE
-        } else {
-            binding.tvStatus.text = "无障碍服务已启用"
-            binding.btnSettings.visibility = View.GONE
-        }
+        val accessibilityEnabled = isAccessibilityServiceEnabled()
+        val overlayEnabled = Settings.canDrawOverlays(this)
+        val screenCaptureEnabled = mediaProjection != null
 
-        if (!Settings.canDrawOverlays(this)) {
-            binding.tvStatus.append(" | 建议开启悬浮窗权限")
+        binding.tvAccessibilityStatus.text = if (accessibilityEnabled) "无障碍：已授权" else "无障碍：未授权"
+        binding.tvScreenCaptureStatus.text = if (screenCaptureEnabled) "屏幕录制：已授权" else "屏幕录制：未授权"
+        binding.tvOverlayStatus.text = if (overlayEnabled) "悬浮窗：已授权" else "悬浮窗：未授权"
+
+        binding.btnAccessibilityPermission.text = if (accessibilityEnabled) "已开启" else "去开启"
+        binding.btnScreenCapturePermission.text = if (screenCaptureEnabled) "已授权" else "去授权"
+        binding.btnOverlayPermission.text = if (overlayEnabled) "已授权" else "去授权"
+
+        binding.btnAccessibilityPermission.isEnabled = !accessibilityEnabled
+        binding.btnScreenCapturePermission.isEnabled = !screenCaptureEnabled
+        binding.btnOverlayPermission.isEnabled = !overlayEnabled
+
+        if (!accessibilityEnabled) {
+            binding.tvStatus.text = "请先启用无障碍服务"
+//            binding.btnSettings.visibility = View.VISIBLE
+        } else if (!overlayEnabled) {
+            binding.tvStatus.text = "请授予悬浮窗权限"
+            binding.btnSettings.visibility = View.GONE
+        } else if (!screenCaptureEnabled && getSelectedMode() != Mode.ACCESSIBILITY) {
+            binding.tvStatus.text = "当前模式需要屏幕录制权限"
+            binding.btnSettings.visibility = View.GONE
+        } else {
+            binding.tvStatus.text = "权限已就绪"
+            binding.btnSettings.visibility = View.GONE
         }
 
         // Android 13+ 需要请求通知权限
@@ -122,12 +156,21 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun isAccessibilityServiceEnabled(): Boolean {
-        val enabledServices = Settings.Secure.getString(
+        val accessibilityManager = getSystemService(ACCESSIBILITY_SERVICE) as? AccessibilityManager
+        val enabledServices = accessibilityManager
+            ?.getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_ALL_MASK)
+            .orEmpty()
+
+        if (enabledServices.any { it.resolveInfo.serviceInfo.packageName == packageName }) {
+            return true
+        }
+
+        val enabledServicesSetting = Settings.Secure.getString(
             contentResolver,
             Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
         ) ?: return false
 
-        return enabledServices.contains(packageName)
+        return enabledServicesSetting.contains("$packageName/")
     }
 
     private fun openAccessibilitySettings() {
@@ -221,7 +264,7 @@ class MainActivity : AppCompatActivity() {
                                             android.util.Log.d("MainActivity", "MediaProjection 已停止")
                                             // MediaProjection 已停止，清空引用，下次需要重新请求
                                             mediaProjection = null
-                                            binding.tvStatus.text = "屏幕录制权限已过期，请重新授权"
+                                            checkPermissions()
                                         }
                                     },
                                     android.os.Handler(android.os.Looper.getMainLooper())
@@ -229,7 +272,7 @@ class MainActivity : AppCompatActivity() {
                                 
                                 android.util.Log.d("MainActivity", "✅ MediaProjection 创建成功，回调已注册")
                                 Toast.makeText(this, "屏幕录制权限已授予", Toast.LENGTH_SHORT).show()
-                                binding.tvStatus.text = "权限已就绪，可以开始任务"
+                                checkPermissions()
                                 
                                 // 如果用户之前点击了开始任务，现在自动开始
                                 val task = binding.etTask.text.toString().trim()
@@ -252,7 +295,7 @@ class MainActivity : AppCompatActivity() {
                     }
                 } else {
                     Toast.makeText(this, "需要屏幕录制权限才能截图，请重新点击开始任务", Toast.LENGTH_LONG).show()
-                    binding.tvStatus.text = "屏幕录制权限未授予"
+                    checkPermissions()
                 }
             }
             REQUEST_CODE_ACCESSIBILITY -> {
@@ -409,6 +452,7 @@ class MainActivity : AppCompatActivity() {
             putExtra(AgentForegroundService.EXTRA_TASK, task)
             putExtra(AgentForegroundService.EXTRA_BASE_URL, baseUrl)
             putExtra(AgentForegroundService.EXTRA_MODEL_NAME, modelName)
+            putExtra(AgentForegroundService.EXTRA_MODE, selectedMode.name)
         }
         startForegroundService(serviceIntent)
 
@@ -517,6 +561,7 @@ class MainActivity : AppCompatActivity() {
                 phoneAgent = null // 清理 Agent 实例
                 AgentSessionCoordinator.clear()
                 FloatingOverlayService.hide(this@MainActivity)
+                checkPermissions()
             }
             // 停止前台服务
             val stopIntent = Intent(this, AgentForegroundService::class.java).apply {
@@ -540,7 +585,7 @@ class MainActivity : AppCompatActivity() {
         
         binding.btnStart.isEnabled = true
         binding.btnStop.isEnabled = false
-        binding.tvStatus.text = "任务已停止"
+        checkPermissions()
         appendLog("任务已停止")
         
         // 停止VAD检测
@@ -964,5 +1009,10 @@ class MainActivity : AppCompatActivity() {
         super.onDestroy()
         // 释放VAD资源
         stopVADDetection()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        checkPermissions()
     }
 }

@@ -16,6 +16,8 @@ import com.mobileagent.phoneagent.action.ActionResult
 import com.mobileagent.phoneagent.model.Message
 import com.mobileagent.phoneagent.model.ModelClient
 import com.mobileagent.phoneagent.service.PhoneAgentAccessibilityService
+import com.mobileagent.phoneagent.skill.SkillActionInterceptor
+import com.mobileagent.phoneagent.skill.SkillExecutionAdvisor
 import com.mobileagent.phoneagent.skill.SkillPromptAugmentor
 import com.mobileagent.phoneagent.utils.ScreenshotManager
 import kotlinx.coroutines.*
@@ -55,6 +57,8 @@ class PhoneAgent(
     }
     private val stateMachine = AgentStateMachine()
     private val failureTracker = FailureTracker()
+    private val skillActionInterceptor = SkillActionInterceptor()
+    private val skillExecutionAdvisor = SkillExecutionAdvisor()
     private val skillPromptAugmentor = SkillPromptAugmentor()
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     
@@ -260,6 +264,7 @@ class PhoneAgent(
         sessionMemory.addObservation(observation.contentItems)
         
         val messagesToSend = skillPromptAugmentor.augment(
+            context = context,
             messages = sessionMemory.messagesForRequest(),
             currentApp = currentApp,
             task = currentTask ?: userPrompt
@@ -334,7 +339,13 @@ class PhoneAgent(
             message = "正在执行操作..."
         ))
         
-        val actionResult = executeActionWithRetry(actionJson, screenWidth, screenHeight)
+        val actionResult = executeActionWithRetry(
+            actionJson = actionJson,
+            screenWidth = screenWidth,
+            screenHeight = screenHeight,
+            currentApp = currentApp,
+            task = currentTask ?: userPrompt
+        )
         Log.d(TAG, "========================================")
         Log.d(TAG, "📊 操作执行结果")
         Log.d(TAG, "成功: ${actionResult.success}")
@@ -388,6 +399,15 @@ class PhoneAgent(
         // 如果操作失败，添加失败信息到上下文，帮助AI下次尝试不同方法
         if (!actionResult.success && actionResult.message != null) {
             sessionMemory.addFailureFeedback(actionResult.message)
+            skillExecutionAdvisor.buildFailureRecoveryMessage(
+                context = context,
+                currentApp = currentApp,
+                task = currentTask ?: userPrompt,
+                actionJson = actionJson,
+                actionResult = actionResult
+            )?.let { recoveryMessage ->
+                sessionMemory.add(Message("user", recoveryMessage))
+            }
             Log.d(TAG, "已添加失败信息到上下文，帮助AI重新规划")
         }
 
@@ -416,17 +436,41 @@ class PhoneAgent(
     private suspend fun executeActionWithRetry(
         actionJson: String,
         screenWidth: Int,
-        screenHeight: Int
+        screenHeight: Int,
+        currentApp: String?,
+        task: String?
     ): ActionResult {
         // 如果连续失败次数过多，尝试让AI重新规划
         failureTracker.maybeReplanHintForExecution()?.let { lastFailedAction ->
             Log.w(TAG, "⚠️ 连续失败 ${failureTracker.consecutiveFailures} 次，可能需要重新规划策略")
             sessionMemory.addReplanHint(lastFailedAction)
         }
-        
-        // 执行操作
+
         return try {
-            actionHandler.execute(actionJson, screenWidth, screenHeight)
+            val primaryResult = actionHandler.execute(actionJson, screenWidth, screenHeight)
+            if (primaryResult.success) {
+                return primaryResult
+            }
+
+            val fallbackActions = skillActionInterceptor.fallbackActions(
+                context = context,
+                currentApp = currentApp,
+                task = task,
+                actionJson = actionJson,
+                actionResult = primaryResult
+            )
+
+            for ((index, fallbackAction) in fallbackActions.withIndex()) {
+                Log.w(TAG, "⚠️ 尝试 Skill Fallback #${index + 1}: $fallbackAction")
+                val fallbackResult = actionHandler.execute(fallbackAction, screenWidth, screenHeight)
+                if (fallbackResult.success) {
+                    return fallbackResult.copy(
+                        message = "Skill fallback 执行成功: ${fallbackResult.message ?: fallbackAction}"
+                    )
+                }
+            }
+
+            primaryResult
         } catch (e: Exception) {
             Log.e(TAG, "❌ 操作执行失败", e)
             e.printStackTrace()

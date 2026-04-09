@@ -22,6 +22,7 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.mobileagent.phoneagent.MainActivity
 import com.mobileagent.phoneagent.R
+import com.mobileagent.phoneagent.agent.Mode
 
 /**
  * 前台服务 - 用于在后台运行 AI 任务
@@ -38,6 +39,7 @@ class AgentForegroundService : Service() {
         const val EXTRA_TASK = "task"
         const val EXTRA_BASE_URL = "base_url"
         const val EXTRA_MODEL_NAME = "model_name"
+        const val EXTRA_MODE = "mode"
     }
 
     private var isRunning = false
@@ -107,8 +109,9 @@ class AgentForegroundService : Service() {
                 val task = intent.getStringExtra(EXTRA_TASK)
                 val baseUrl = intent.getStringExtra(EXTRA_BASE_URL)
                 val modelName = intent.getStringExtra(EXTRA_MODEL_NAME)
+                val modeName = intent.getStringExtra(EXTRA_MODE)
                 if (task != null) {
-                    startTask(task, baseUrl, modelName)
+                    startTask(task, baseUrl, modelName, modeName)
                 }
             }
             ACTION_STOP_TASK -> {
@@ -161,7 +164,7 @@ class AgentForegroundService : Service() {
         }
     }
 
-    private fun startForegroundService(task: String) {
+    private fun startForegroundService(task: String, requiresMediaProjection: Boolean = false) {
         val notificationIntent = Intent(this, MainActivity::class.java)
         val pendingIntent = PendingIntent.getActivity(
             this,
@@ -181,11 +184,14 @@ class AgentForegroundService : Service() {
             .build()
 
         // Android 14+ 需要明确指定前台服务类型
-        // 使用 specialUse 类型，因为 mediaProjection 需要系统级权限
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                startForeground(NOTIFICATION_ID, notification,
-                    android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+                val foregroundType = if (requiresMediaProjection) {
+                    android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+                } else {
+                    android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+                }
+                startForeground(NOTIFICATION_ID, notification, foregroundType)
             } else {
                 startForeground(NOTIFICATION_ID, notification)
             }
@@ -261,9 +267,13 @@ class AgentForegroundService : Service() {
         notificationManager.notify(NOTIFICATION_ID_USER_INTERVENTION, notification)
     }
 
-    private fun startTask(task: String, baseUrl: String?, modelName: String?) {
+    private fun startTask(task: String, baseUrl: String?, modelName: String?, modeName: String?) {
         Log.d(TAG, "开始任务: $task")
-        startForegroundService(task)
+        val mode = modeName?.let {
+            runCatching { Mode.valueOf(it) }.getOrNull()
+        } ?: Mode.VISION
+        val requiresMediaProjection = mode == Mode.VISION || mode == Mode.HYBRID
+        startForegroundService(task, requiresMediaProjection)
         // 实际任务执行逻辑会在 MainActivity 中通过回调触发
     }
 
@@ -281,4 +291,3 @@ class AgentForegroundService : Service() {
         stopForeground(STOP_FOREGROUND_REMOVE)
     }
 }
-
