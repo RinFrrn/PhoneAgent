@@ -169,6 +169,11 @@ class FloatingOverlayService : Service() {
         view.findViewById<Button>(R.id.btnOverlayStop).setOnClickListener {
             AgentSessionCoordinator.stopCurrentTask()
             hide(this)
+
+            val openIntent = Intent(this, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            }
+            startActivity(openIntent)
         }
 
         overlayView = view

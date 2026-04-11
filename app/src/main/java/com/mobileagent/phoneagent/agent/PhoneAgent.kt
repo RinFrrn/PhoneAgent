@@ -69,7 +69,7 @@ class PhoneAgent(
     /**
      * 运行任务
      */
-    fun run(task: String, onComplete: (String) -> Unit) {
+    fun run(task: String, onComplete: (TaskOutcome) -> Unit) {
         if (isTaskRunning()) {
             Log.w(TAG, "⚠️ Agent 已在运行中，忽略重复请求")
             return
@@ -102,18 +102,18 @@ class PhoneAgent(
                         } catch (e: SecurityException) {
                             Log.e(TAG, "❌ MediaProjection 已过期或无效", e)
                             stateMachine.markFailed()
-                            onComplete("MediaProjection 已过期，请重新授权屏幕录制权限后重试")
+                            onComplete(TaskOutcome(false, "MediaProjection 已过期，请重新授权屏幕录制权限后重试"))
                             return@launch
                         } catch (e: Exception) {
                             Log.e(TAG, "❌ 初始化 ScreenshotManager 失败", e)
                             stateMachine.markFailed()
-                            onComplete("初始化截图管理器失败: ${e.message}")
+                            onComplete(TaskOutcome(false, "初始化截图管理器失败: ${e.message}"))
                             return@launch
                         }
                     } else {
                         Log.e(TAG, "❌ MediaProjection 为 null，无法初始化 ScreenshotManager（模式: $mode）")
                         stateMachine.markFailed()
-                        onComplete("MediaProjection 未初始化，请先授权屏幕录制权限")
+                        onComplete(TaskOutcome(false, "MediaProjection 未初始化，请先授权屏幕录制权限"))
                         return@launch
                     }
                 } else {
@@ -128,9 +128,16 @@ class PhoneAgent(
                 Log.d(TAG, "执行第一步...")
                 val firstResult = executeStep(task, isFirst = true)
                 if (firstResult.finished) {
-                    Log.d(TAG, "第一步即完成任务")
-                    stateMachine.markCompleted()
-                    onComplete(firstResult.message ?: "任务完成")
+                    val isRealFinish = stateMachine.shouldFinishLoop(firstResult)
+                    if (isRealFinish) {
+                        Log.d(TAG, "第一步即完成任务")
+                        stateMachine.markCompleted()
+                        onComplete(TaskOutcome(true, firstResult.message ?: "任务完成"))
+                    } else {
+                        Log.w(TAG, "第一步结束于错误或中断")
+                        stateMachine.markFailed()
+                        onComplete(TaskOutcome(false, firstResult.message ?: "任务执行失败"))
+                    }
                     return@launch
                 }
                 while (isTaskRunning()) {
@@ -171,11 +178,13 @@ class PhoneAgent(
                         if (isRealFinish) {
                             Log.d(TAG, "✅ 任务在步骤 $stepCount 完成（AI明确使用finish）")
                             stateMachine.markCompleted()
-                            onComplete(result.message ?: "任务完成")
+                            onComplete(TaskOutcome(true, result.message ?: "任务完成"))
                             return@launch
                         } else {
                             Log.w(TAG, "⚠️ 步骤标记为完成，但可能是错误导致的，继续执行")
-                            // 继续执行，不停止
+                            stateMachine.markFailed()
+                            onComplete(TaskOutcome(false, result.message ?: "任务执行失败"))
+                            return@launch
                         }
                     }
                     
@@ -191,7 +200,7 @@ class PhoneAgent(
                 Log.e(TAG, "❌ 执行任务失败", e)
                 e.printStackTrace()
                 stateMachine.markFailed()
-                onComplete("任务执行失败: ${e.message}")
+                onComplete(TaskOutcome(false, "任务执行失败: ${e.message}"))
             } finally {
                 // 清理资源
                 screenshotManager?.cleanup()
@@ -507,4 +516,9 @@ data class StepResult(
     val thinking: String,
     val action: String,
     val message: String? = null
+)
+
+data class TaskOutcome(
+    val success: Boolean,
+    val message: String
 )

@@ -710,6 +710,7 @@ class PhoneAgentAccessibilityService : AccessibilityService() {
                 Log.d(TAG, "找到启动 Intent")
                 intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
                 intent.addFlags(android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                intent.addFlags(android.content.Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED)
                 startActivity(intent)
                 Log.d(TAG, "✅ 应用启动成功（方法1）")
                 return true
@@ -717,22 +718,21 @@ class PhoneAgentAccessibilityService : AccessibilityService() {
             
             // 方法2: 如果方法1失败，尝试使用主 Activity
             Log.d(TAG, "方法1失败，尝试方法2...")
-            val pm = packageManager
-            val activities = pm.getPackageInfo(packageName, PackageManager.GET_ACTIVITIES).activities
-            if (activities != null && activities.isNotEmpty()) {
-                val mainActivity = activities.firstOrNull { activity ->
-                    activity.name.contains("MainActivity", ignoreCase = true) ||
-                    activity.name.contains("Launcher", ignoreCase = true) ||
-                    activity.name.contains("Splash", ignoreCase = true)
-                } ?: activities[0]
-                
-                intent = android.content.Intent().apply {
-                    setClassName(packageName, mainActivity.name)
+            val launcherIntent = android.content.Intent(android.content.Intent.ACTION_MAIN).apply {
+                addCategory(android.content.Intent.CATEGORY_LAUNCHER)
+                setPackage(packageName)
+            }
+            val launcherActivities = packageManager.queryIntentActivities(launcherIntent, PackageManager.MATCH_ALL)
+            val launcherActivity = launcherActivities.firstOrNull()
+            if (launcherActivity != null) {
+                intent = android.content.Intent(launcherIntent).apply {
+                    setClassName(packageName, launcherActivity.activityInfo.name)
                     addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
                     addFlags(android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                    addFlags(android.content.Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED)
                 }
                 startActivity(intent)
-                Log.d(TAG, "✅ 应用启动成功（方法2）")
+                Log.d(TAG, "✅ 应用启动成功（方法2: Launcher Activity）")
                 return true
             }
             
@@ -743,9 +743,16 @@ class PhoneAgentAccessibilityService : AccessibilityService() {
                 setPackage(packageName)
                 addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
             }
-            startActivity(intent)
-            Log.d(TAG, "✅ 应用启动成功（方法3）")
-            true
+            val resolved = packageManager.resolveActivity(intent, PackageManager.MATCH_DEFAULT_ONLY)
+            if (resolved != null) {
+                intent.setClassName(resolved.activityInfo.packageName, resolved.activityInfo.name)
+                startActivity(intent)
+                Log.d(TAG, "✅ 应用启动成功（方法3: resolveActivity）")
+                true
+            } else {
+                Log.e(TAG, "❌ 未找到可启动的 Launcher Activity: $packageName")
+                false
+            }
         } catch (e: PackageManager.NameNotFoundException) {
             Log.e(TAG, "❌ 应用未安装: $packageName", e)
             false
@@ -762,4 +769,3 @@ class PhoneAgentAccessibilityService : AccessibilityService() {
         }
     }
 }
-

@@ -544,21 +544,25 @@ class MainActivity : AppCompatActivity() {
         }
         
         phoneAgent?.run(task) { result ->
-            android.util.Log.d("MainActivity", "任务完成回调: $result")
+            android.util.Log.d("MainActivity", "任务结束回调: $result")
             runOnUiThread {
                 binding.btnStart.isEnabled = true
                 binding.btnStop.isEnabled = false
-                binding.tvStatus.text = "任务完成: $result"
                 appendLog("")
                 appendLog("========================================")
-                appendLog("✅ 任务完成: $result")
+                if (result.success) {
+                    binding.tvStatus.text = "任务完成: ${result.message}"
+                    appendLog("✅ 任务完成: ${result.message}")
+                    android.util.Log.d("MainActivity", "任务完成，清理 MediaProjection，下次启动时将重新请求权限")
+                    mediaProjection = null
+                } else {
+                    binding.tvStatus.text = "任务失败: ${result.message}"
+                    appendLog("❌ 任务失败: ${result.message}")
+                    android.util.Log.w("MainActivity", "任务失败，保留 MediaProjection 以便用户修正后重试")
+                }
                 appendLog("========================================")
-                
-                // 任务完成后清理 MediaProjection，下次启动任务时会自动重新请求权限
-                // 这样可以避免 MediaProjection 过期的问题
-                android.util.Log.d("MainActivity", "任务完成，清理 MediaProjection，下次启动时将重新请求权限")
-                mediaProjection = null
-                phoneAgent = null // 清理 Agent 实例
+
+                phoneAgent = null
                 AgentSessionCoordinator.clear()
                 FloatingOverlayService.hide(this@MainActivity)
                 checkPermissions()

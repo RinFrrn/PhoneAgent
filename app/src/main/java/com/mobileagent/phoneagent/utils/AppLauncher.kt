@@ -10,9 +10,11 @@
  */
 package com.mobileagent.phoneagent.utils
 
+import android.content.Intent
 import android.content.Context
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
+import android.content.pm.ResolveInfo
 import android.util.Log
 import com.mobileagent.phoneagent.skill.SkillRegistry
 
@@ -52,19 +54,18 @@ object AppLauncher {
         Log.d(TAG, "开始查找应用: $appName")
         
         val packageManager = context.packageManager
-        val installedPackages = packageManager.getInstalledPackages(PackageManager.GET_META_DATA)
+        val launcherApps = queryLauncherApps(packageManager)
         
         val normalizedAppName = appName.trim().lowercase()
         
         // 精确匹配
-        for (packageInfo in installedPackages) {
+        for (resolveInfo in launcherApps) {
             try {
-                val applicationInfo = packageInfo.applicationInfo
-                val label = packageManager.getApplicationLabel(applicationInfo).toString()
+                val label = resolveInfo.loadLabel(packageManager).toString()
                 
                 if (label.equals(appName, ignoreCase = true) || 
                     label.lowercase() == normalizedAppName) {
-                    val packageName = packageInfo.packageName
+                    val packageName = resolveInfo.activityInfo.packageName
                     Log.d(TAG, "✅ 精确匹配: $appName -> $packageName (显示名称: $label)")
                     appNameCache[cacheKey] = packageName
                     return packageName
@@ -79,11 +80,11 @@ object AppLauncher {
         var bestMatch: String? = null
         var bestScore = 0
         
-        for (packageInfo in installedPackages) {
+        for (resolveInfo in launcherApps) {
             try {
-                val applicationInfo = packageInfo.applicationInfo
-                val label = packageManager.getApplicationLabel(applicationInfo).toString()
+                val label = resolveInfo.loadLabel(packageManager).toString()
                 val labelLower = label.lowercase()
+                val packageName = resolveInfo.activityInfo.packageName
                 
                 // 计算匹配分数
                 var score = 0
@@ -100,14 +101,14 @@ object AppLauncher {
                 }
                 
                 // 检查包名是否包含关键词（作为备选）
-                if (packageInfo.packageName.lowercase().contains(normalizedAppName.replace(" ", ""))) {
+                if (packageName.lowercase().contains(normalizedAppName.replace(" ", ""))) {
                     score += 2
                 }
                 
                 if (score > bestScore) {
                     bestScore = score
-                    bestMatch = packageInfo.packageName
-                    Log.d(TAG, "找到模糊匹配: $appName -> ${packageInfo.packageName} (显示名称: $label, 分数: $score)")
+                    bestMatch = packageName
+                    Log.d(TAG, "找到模糊匹配: $appName -> $packageName (显示名称: $label, 分数: $score)")
                 }
             } catch (e: Exception) {
                 continue
@@ -160,18 +161,18 @@ object AppLauncher {
     fun searchApps(context: Context, keyword: String, limit: Int = 10): List<Pair<String, String>> {
         val results = mutableListOf<Pair<String, String>>()
         val packageManager = context.packageManager
-        val installedPackages = packageManager.getInstalledPackages(PackageManager.GET_META_DATA)
+        val launcherApps = queryLauncherApps(packageManager)
         val normalizedKeyword = keyword.trim().lowercase()
         
-        for (packageInfo in installedPackages) {
+        for (resolveInfo in launcherApps) {
             try {
-                val applicationInfo = packageInfo.applicationInfo
-                val label = packageManager.getApplicationLabel(applicationInfo).toString()
+                val label = resolveInfo.loadLabel(packageManager).toString()
                 val labelLower = label.lowercase()
+                val packageName = resolveInfo.activityInfo.packageName
                 
                 if (labelLower.contains(normalizedKeyword) || 
-                    packageInfo.packageName.lowercase().contains(normalizedKeyword)) {
-                    results.add(Pair(label, packageInfo.packageName))
+                    packageName.lowercase().contains(normalizedKeyword)) {
+                    results.add(Pair(label, packageName))
                     if (results.size >= limit) {
                         break
                     }
@@ -190,5 +191,13 @@ object AppLauncher {
     fun clearCache() {
         appNameCache.clear()
         Log.d(TAG, "应用名称缓存已清除")
+    }
+
+    private fun queryLauncherApps(packageManager: PackageManager): List<ResolveInfo> {
+        val launcherIntent = Intent(Intent.ACTION_MAIN).apply {
+            addCategory(Intent.CATEGORY_LAUNCHER)
+        }
+        return packageManager.queryIntentActivities(launcherIntent, PackageManager.MATCH_ALL)
+            .distinctBy { it.activityInfo.packageName }
     }
 }
