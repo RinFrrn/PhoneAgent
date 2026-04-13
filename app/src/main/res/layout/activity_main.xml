@@ -237,6 +237,13 @@
                 android:text="停止任务" />
         </LinearLayout>
 
+        <Button
+            android:id="@+id/btnRunEval"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="16dp"
+            android:text="运行评测" />
+
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"

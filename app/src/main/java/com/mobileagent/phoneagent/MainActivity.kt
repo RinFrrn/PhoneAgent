@@ -30,18 +30,27 @@ import androidx.lifecycle.lifecycleScope
 import com.mobileagent.phoneagent.agent.AgentSessionCoordinator
 import com.mobileagent.phoneagent.agent.Mode
 import com.mobileagent.phoneagent.agent.PhoneAgent
+import com.mobileagent.phoneagent.agent.TaskOutcome
 import com.mobileagent.phoneagent.databinding.ActivityMainBinding
+import com.mobileagent.phoneagent.harness.eval.ActiveEvalRunner
+import com.mobileagent.phoneagent.harness.eval.ActiveEvalReport
+import com.mobileagent.phoneagent.harness.eval.EvalRunner
+import com.mobileagent.phoneagent.harness.spec.TaskSpec
 import com.mobileagent.phoneagent.model.ModelClient
 import com.mobileagent.phoneagent.service.AgentForegroundService
 import com.mobileagent.phoneagent.service.FloatingOverlayService
 import com.mobileagent.phoneagent.service.PhoneAgentAccessibilityService
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlin.coroutines.resume
 
 class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
     private var mediaProjection: android.media.projection.MediaProjection? = null
     private var phoneAgent: PhoneAgent? = null
     private var foregroundService: AgentForegroundService? = null
+    private var evalJob: Job? = null
 
     companion object {
         private const val REQUEST_CODE_ACCESSIBILITY = 100
@@ -72,6 +81,10 @@ class MainActivity : AppCompatActivity() {
 
         binding.btnStop.setOnClickListener {
             stopTask()
+        }
+
+        binding.btnRunEval.setOnClickListener {
+            startEvalSuite()
         }
 
         binding.btnSettings.setOnClickListener {
@@ -446,15 +459,7 @@ class MainActivity : AppCompatActivity() {
         val systemPrompt = getSystemPrompt() // 从资源文件读取
         // selectedMode 已在上面获取
 
-        // 启动前台服务
-        val serviceIntent = Intent(this, AgentForegroundService::class.java).apply {
-            action = AgentForegroundService.ACTION_START_TASK
-            putExtra(AgentForegroundService.EXTRA_TASK, task)
-            putExtra(AgentForegroundService.EXTRA_BASE_URL, baseUrl)
-            putExtra(AgentForegroundService.EXTRA_MODEL_NAME, modelName)
-            putExtra(AgentForegroundService.EXTRA_MODE, selectedMode.name)
-        }
-        startForegroundService(serviceIntent)
+        startTaskForegroundService(task, baseUrl, modelName, selectedMode)
 
         // 根据模式决定是否传递 mediaProjection
         // 无障碍模式下传递 null，视觉模式和混合模式下传递实际的 mediaProjection
@@ -576,24 +581,214 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun stopTask() {
+        evalJob?.cancel()
+        evalJob = null
         phoneAgent?.stop()
         phoneAgent = null
         AgentSessionCoordinator.clear()
         FloatingOverlayService.hide(this)
         
-        // 停止前台服务
-        val stopIntent = Intent(this, AgentForegroundService::class.java).apply {
-            action = AgentForegroundService.ACTION_STOP_TASK
-        }
-        stopService(stopIntent)
+        stopTaskForegroundService()
         
         binding.btnStart.isEnabled = true
         binding.btnStop.isEnabled = false
+        binding.btnRunEval.isEnabled = true
         checkPermissions()
         appendLog("任务已停止")
         
         // 停止VAD检测
         stopVADDetection()
+    }
+
+    private fun startEvalSuite() {
+        if (!isAccessibilityServiceEnabled()) {
+            Toast.makeText(this, "请先启用无障碍服务", Toast.LENGTH_LONG).show()
+            openAccessibilitySettings()
+            return
+        }
+
+        if (!Settings.canDrawOverlays(this)) {
+            Toast.makeText(this, "请先授予悬浮窗权限", Toast.LENGTH_LONG).show()
+            val intent = Intent(
+                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                android.net.Uri.parse("package:$packageName")
+            )
+            startActivityForResult(intent, REQUEST_CODE_OVERLAY)
+            return
+        }
+
+        val evalRunner = EvalRunner(this)
+        val cases = evalRunner.loadDefaultCases()
+        if (cases.isEmpty()) {
+            Toast.makeText(this, "未找到评测用例", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        val requiresScreenCapture = cases.any {
+            parseModeOrDefault(it.taskMode ?: it.mode ?: "HYBRID") != Mode.ACCESSIBILITY
+        }
+        if (requiresScreenCapture && mediaProjection == null) {
+            Toast.makeText(this, "评测包含视觉任务，先授权屏幕录制", Toast.LENGTH_LONG).show()
+            requestScreenCapturePermission()
+            return
+        }
+
+        val accessibilityService = PhoneAgentAccessibilityService.getInstance()
+        if (accessibilityService == null) {
+            Toast.makeText(this, "无障碍服务未启动，请重启应用", Toast.LENGTH_LONG).show()
+            return
+        }
+
+        val displayMetrics = resources.displayMetrics
+        val screenWidth = displayMetrics.widthPixels
+        val screenHeight = displayMetrics.heightPixels
+        val provider = SettingsActivity.getProvider(this)
+        val baseUrl = SettingsActivity.getBaseUrl(this)
+        val modelName = SettingsActivity.getModelName(this)
+        val apiKey = SettingsActivity.getApiKey(this)
+        val temperature = SettingsActivity.getTemperature(this)
+        val topP = SettingsActivity.getTopP(this)
+        val systemPrompt = getSystemPrompt()
+
+        val activeEvalRunner = ActiveEvalRunner(evalRunner)
+        binding.btnStart.isEnabled = false
+        binding.btnStop.isEnabled = true
+        binding.btnRunEval.isEnabled = false
+        binding.tvStatus.text = "评测执行中..."
+        binding.tvLog.text = ""
+        resetStepCount()
+        appendLog("🧪 开始运行评测，共 ${cases.size} 个用例")
+
+        evalJob = lifecycleScope.launch {
+            val report = activeEvalRunner.runCases(cases) { taskSpec ->
+                executeEvalTask(
+                    taskSpec = taskSpec,
+                    accessibilityService = accessibilityService,
+                    screenWidth = screenWidth,
+                    screenHeight = screenHeight,
+                    baseUrl = baseUrl,
+                    modelName = modelName,
+                    apiKey = apiKey,
+                    provider = provider,
+                    temperature = temperature,
+                    topP = topP,
+                    systemPrompt = systemPrompt
+                )
+            }
+
+            runOnUiThread {
+                binding.btnStart.isEnabled = true
+                binding.btnStop.isEnabled = false
+                binding.btnRunEval.isEnabled = true
+                checkPermissions()
+                binding.tvStatus.text = "评测完成: ${report.passedCases}/${report.totalCases}"
+                appendEvalReport(report)
+            }
+            evalJob = null
+        }
+    }
+
+    private suspend fun executeEvalTask(
+        taskSpec: TaskSpec,
+        accessibilityService: PhoneAgentAccessibilityService,
+        screenWidth: Int,
+        screenHeight: Int,
+        baseUrl: String,
+        modelName: String,
+        apiKey: String,
+        provider: com.mobileagent.phoneagent.model.ModelProvider,
+        temperature: Float,
+        topP: Float,
+        systemPrompt: String
+    ): TaskOutcome = suspendCancellableCoroutine { continuation ->
+        val taskMode = parseModeOrDefault(taskSpec.mode)
+        val modelClient = ModelClient(baseUrl, modelName, apiKey, provider, temperature, topP)
+        val mediaProjectionForAgent = if (taskMode == Mode.ACCESSIBILITY) null else mediaProjection
+
+        runOnUiThread {
+            appendLog("")
+            appendLog("========================================")
+            appendLog("🧪 执行评测用例: ${taskSpec.id}")
+            appendLog("任务: ${taskSpec.goal}")
+            appendLog("模式: ${taskSpec.mode}")
+            appendLog("========================================")
+        }
+
+        startTaskForegroundService(taskSpec.goal, baseUrl, modelName, taskMode)
+        phoneAgent = PhoneAgent(
+            context = this,
+            modelClient = modelClient,
+            accessibilityService = accessibilityService,
+            mediaProjection = mediaProjectionForAgent,
+            screenWidth = screenWidth,
+            screenHeight = screenHeight,
+            maxSteps = taskSpec.maxSteps,
+            systemPrompt = systemPrompt,
+            mode = taskMode,
+            onStepCallback = { stepResult ->
+                runOnUiThread {
+                    updateStepInfo(stepResult)
+                }
+            },
+            onUserInterventionCallback = { message ->
+                showUserInterventionNotification(message)
+            }
+        )
+
+        continuation.invokeOnCancellation {
+            runOnUiThread {
+                phoneAgent?.stop()
+                phoneAgent = null
+                stopTaskForegroundService()
+            }
+        }
+
+        phoneAgent?.run(taskSpec) { result ->
+            runOnUiThread {
+                appendLog("评测用例结果: ${if (result.success) "✅" else "❌"} ${result.message}")
+            }
+            phoneAgent = null
+            stopTaskForegroundService()
+            if (continuation.isActive) {
+                continuation.resume(result)
+            }
+        }
+    }
+
+    private fun appendEvalReport(report: ActiveEvalReport) {
+        appendLog("")
+        appendLog("========================================")
+        appendLog("🧪 评测报告")
+        appendLog("通过: ${report.passedCases}/${report.totalCases}")
+        report.results.forEach { result ->
+            appendLog("- ${result.caseName}: ${if (result.evaluation.passed) "PASS" else "FAIL"}")
+            appendLog("  outcome: ${result.taskOutcomeMessage}")
+            appendLog("  trace: ${result.traceSessionId ?: "N/A"}")
+            appendLog("  reasons: ${result.evaluation.reasons.joinToString(" | ")}")
+        }
+        appendLog("========================================")
+    }
+
+    private fun parseModeOrDefault(modeName: String): Mode {
+        return runCatching { Mode.valueOf(modeName.uppercase()) }.getOrDefault(Mode.HYBRID)
+    }
+
+    private fun startTaskForegroundService(task: String, baseUrl: String, modelName: String, mode: Mode) {
+        val serviceIntent = Intent(this, AgentForegroundService::class.java).apply {
+            action = AgentForegroundService.ACTION_START_TASK
+            putExtra(AgentForegroundService.EXTRA_TASK, task)
+            putExtra(AgentForegroundService.EXTRA_BASE_URL, baseUrl)
+            putExtra(AgentForegroundService.EXTRA_MODEL_NAME, modelName)
+            putExtra(AgentForegroundService.EXTRA_MODE, mode.name)
+        }
+        startForegroundService(serviceIntent)
+    }
+
+    private fun stopTaskForegroundService() {
+        val stopIntent = Intent(this, AgentForegroundService::class.java).apply {
+            action = AgentForegroundService.ACTION_STOP_TASK
+        }
+        stopService(stopIntent)
     }
 
     private fun updateNotification(content: String) {
