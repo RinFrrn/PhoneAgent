@@ -1,0 +1,18 @@
+[
+  {
+    "id": "launch-app-basic",
+    "name": "Launch App Basic",
+    "taskGoalContains": "打开",
+    "expectSuccess": true,
+    "maxSteps": 12,
+    "minVerificationPassRate": 0.5
+  },
+  {
+    "id": "search-basic",
+    "name": "Search Basic",
+    "taskGoalContains": "搜索",
+    "expectSuccess": true,
+    "maxSteps": 18,
+    "minVerificationPassRate": 0.4
+  }
+]
