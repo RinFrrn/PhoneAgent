@@ -12,7 +12,13 @@ import android.graphics.Bitmap
 import android.media.projection.MediaProjection
 import android.util.Log
 import com.mobileagent.phoneagent.action.ActionHandler
-import com.mobileagent.phoneagent.action.ActionResult
+import com.mobileagent.phoneagent.harness.act.DefaultActionExecutor
+import com.mobileagent.phoneagent.harness.observe.DefaultObservationCollector
+import com.mobileagent.phoneagent.harness.plan.LlmPlanner
+import com.mobileagent.phoneagent.harness.runtime.HarnessRuntime
+import com.mobileagent.phoneagent.harness.runtime.HarnessStepRecord
+import com.mobileagent.phoneagent.harness.runtime.StepStatus
+import com.mobileagent.phoneagent.harness.spec.TaskSpec
 import com.mobileagent.phoneagent.model.Message
 import com.mobileagent.phoneagent.model.ModelClient
 import com.mobileagent.phoneagent.service.PhoneAgentAccessibilityService
@@ -61,8 +67,20 @@ class PhoneAgent(
     private val skillExecutionAdvisor = SkillExecutionAdvisor()
     private val skillPromptAugmentor = SkillPromptAugmentor()
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+    private val observationCollector = DefaultObservationCollector(screenObserver)
+    private val planner = LlmPlanner(context, modelClient, responseActionParser, skillPromptAugmentor)
+    private val actionExecutor = DefaultActionExecutor(context, actionHandler, skillActionInterceptor)
+    private val harnessRuntime = HarnessRuntime(
+        context = context,
+        observationCollector = observationCollector,
+        planner = planner,
+        actionExecutor = actionExecutor,
+        sessionMemory = sessionMemory,
+        stateMachine = stateMachine,
+        failureTracker = failureTracker,
+        skillExecutionAdvisor = skillExecutionAdvisor
+    )
     
-    private var stepCount = 0
     private var screenshotManager: ScreenshotManager? = null
     private var currentTask: String? = null // 保存当前任务描述
 
@@ -83,7 +101,6 @@ class PhoneAgent(
 
         stateMachine.start()
         sessionMemory.clear()
-        stepCount = 0
         failureTracker.reset()
         currentTask = task
 
@@ -124,78 +141,24 @@ class PhoneAgent(
                 sessionMemory.addSystemMessage(systemPrompt)
                 Log.d(TAG, "系统提示词已添加")
 
-                // 执行第一步
-                Log.d(TAG, "执行第一步...")
-                val firstResult = executeStep(task, isFirst = true)
-                if (firstResult.finished) {
-                    val isRealFinish = stateMachine.shouldFinishLoop(firstResult)
-                    if (isRealFinish) {
-                        Log.d(TAG, "第一步即完成任务")
-                        stateMachine.markCompleted()
-                        onComplete(TaskOutcome(true, firstResult.message ?: "任务完成"))
-                    } else {
-                        Log.w(TAG, "第一步结束于错误或中断")
-                        stateMachine.markFailed()
-                        onComplete(TaskOutcome(false, firstResult.message ?: "任务执行失败"))
-                    }
-                    return@launch
-                }
-                while (isTaskRunning()) {
-                    Log.d(TAG, "========================================")
-                    Log.d(TAG, "🔄 循环执行 - 当前步数: $stepCount")
-                    Log.d(TAG, "任务目标: $currentTask")
-                    Log.d(TAG, "连续失败次数: ${failureTracker.consecutiveFailures}")
-                    Log.d(TAG, "运行状态: ${stateMachine.currentState()}")
-                    Log.d(TAG, "========================================")
-                    
-                    failureTracker.consumeReplanPrompt(currentTask)?.let { planningHint ->
-                        Log.w(TAG, "⚠️ 连续失败后，添加重新规划提示")
-                        sessionMemory.add(planningHint)
-                    }
-                    
-                    failureTracker.maybeUserInterventionPrompt()?.let { userInterventionHint ->
-                        Log.w(TAG, "⚠️ 连续失败过多，添加用户介入提示")
-                        sessionMemory.add(userInterventionHint)
-                    }
-                    
-                    val result = executeStep(isFirst = false)
-                    
-                    Log.d(TAG, "========================================")
-                    Log.d(TAG, "📊 步骤执行结果")
-                    Log.d(TAG, "成功: ${result.success}")
-                    Log.d(TAG, "完成: ${result.finished}")
-                    Log.d(TAG, "思考: ${result.thinking.take(100)}...")
-                    Log.d(TAG, "操作: ${result.action.take(100)}...")
-                    if (result.message != null) {
-                        Log.d(TAG, "消息: ${result.message}")
-                    }
-                    Log.d(TAG, "连续失败次数: ${failureTracker.consecutiveFailures}")
-                    Log.d(TAG, "========================================")
-                    
-                    // 只有明确使用 finish() 时才停止，否则继续执行
-                    if (result.finished) {
-                        val isRealFinish = stateMachine.shouldFinishLoop(result)
-                        if (isRealFinish) {
-                            Log.d(TAG, "✅ 任务在步骤 $stepCount 完成（AI明确使用finish）")
-                            stateMachine.markCompleted()
-                            onComplete(TaskOutcome(true, result.message ?: "任务完成"))
-                            return@launch
-                        } else {
-                            Log.w(TAG, "⚠️ 步骤标记为完成，但可能是错误导致的，继续执行")
-                            stateMachine.markFailed()
-                            onComplete(TaskOutcome(false, result.message ?: "任务执行失败"))
-                            return@launch
-                        }
-                    }
-                    
-                    // 即使操作失败，也继续执行（让AI尝试不同方法）
-                    // 只有在达到最大步数或明确完成时才停止
-                    
-                    // 短暂延迟，避免过快执行，给UI和系统一些时间
-                    kotlinx.coroutines.delay(800)
-                }
-
-                // 移除最大步数限制检查，只有任务完成才停止
+                harnessRuntime.run(
+                    taskSpec = TaskSpec(
+                        id = "task-${System.currentTimeMillis()}",
+                        goal = task,
+                        mode = mode.name,
+                        maxSteps = maxSteps
+                    ),
+                    screenWidth = screenWidth,
+                    screenHeight = screenHeight,
+                    onStepRecord = { record ->
+                        logStepRecord(record)
+                        onStepCallback?.invoke(record.toStepResult())
+                    },
+                    onUserIntervention = onUserInterventionCallback,
+                    onComplete = onComplete
+                )
+            } catch (e: CancellationException) {
+                Log.d(TAG, "任务已取消")
             } catch (e: Exception) {
                 Log.e(TAG, "❌ 执行任务失败", e)
                 e.printStackTrace()
@@ -241,257 +204,6 @@ class PhoneAgent(
     }
 
     /**
-     * 执行单步
-     */
-    private suspend fun executeStep(
-        userPrompt: String? = null,
-        isFirst: Boolean = false
-    ): StepResult = withContext(Dispatchers.IO) {
-        stepCount++
-        Log.d(TAG, "========================================")
-        Log.d(TAG, "📸 步骤 $stepCount: 开始执行")
-        if (isFirst) {
-            Log.d(TAG, "任务: $userPrompt")
-        }
-
-        val observation = screenObserver.observe()
-        val currentApp = observation.currentApp
-        Log.d(TAG, "当前应用: $currentApp")
-        Log.d(TAG, "任务描述: $userPrompt")
-        Log.d(TAG, "已执行步骤: $stepCount")
-        
-        if (observation.failureMessage != null) {
-            return@withContext StepResult(
-                success = false,
-                finished = mode == Mode.VISION,
-                thinking = observation.failureMessage,
-                action = "",
-                message = observation.failureMessage
-            )
-        }
-
-        sessionMemory.addObservation(observation.contentItems)
-        
-        val messagesToSend = skillPromptAugmentor.augment(
-            context = context,
-            messages = sessionMemory.messagesForRequest(),
-            currentApp = currentApp,
-            task = currentTask ?: userPrompt
-        )
-        val contextSize = sessionMemory.calculateCurrentContextSize()
-        Log.d(TAG, "消息已添加到上下文，总消息数: ${sessionMemory.currentMessageCount()}，发送消息数: ${messagesToSend.size}")
-        Log.d(TAG, "上下文大小: ${contextSize / 1024}KB")
-
-        // 调用模型
-        Log.d(TAG, "🤖 调用 AI 模型...")
-        val modelResponse = try {
-            modelClient.request(messagesToSend)
-        } catch (e: Exception) {
-            Log.e(TAG, "❌ 模型请求失败", e)
-            Log.e(TAG, "错误详情: ${e.message}")
-            e.printStackTrace()
-            return@withContext StepResult(
-                success = false,
-                finished = true,
-                thinking = "模型请求失败: ${e.message}",
-                action = "",
-                message = "模型请求失败: ${e.message}"
-            )
-        }
-        Log.d(TAG, "✅ 模型响应接收成功")
-        Log.d(TAG, "💭 AI思考过程（完整）:")
-        Log.d(TAG, modelResponse.thinking)
-        Log.d(TAG, "🎯 AI操作指令（完整）:")
-        Log.d(TAG, modelResponse.action)
-
-        // 通过回调输出完整的思考过程到UI
-        onStepCallback?.invoke(StepResult(
-            success = false,
-            finished = false,
-            thinking = modelResponse.thinking,
-            action = "分析中...",
-            message = "正在分析屏幕，制定操作计划..."
-        ))
-
-        // 解析操作
-        Log.d(TAG, "解析操作指令...")
-        Log.d(TAG, "原始响应: ${modelResponse.action}")
-        val actionJson = try {
-            val parsed = responseActionParser.parseActionFromResponse(modelResponse.action)
-            Log.d(TAG, "✅ 操作解析成功: $parsed")
-            parsed
-        } catch (e: Exception) {
-            Log.e(TAG, "❌ 解析操作失败", e)
-            Log.e(TAG, "原始操作文本: ${modelResponse.action}")
-            e.printStackTrace()
-            return@withContext StepResult(
-                success = false,
-                finished = false,
-                thinking = modelResponse.thinking,
-                action = modelResponse.action,
-                message = "解析操作失败"
-            )
-        }
-
-        // 执行操作（带重试机制）
-        Log.d(TAG, "========================================")
-        Log.d(TAG, "🎯 开始执行操作")
-        Log.d(TAG, "操作指令: $actionJson")
-        Log.d(TAG, "========================================")
-        
-        // 通过回调输出操作指令到UI
-        onStepCallback?.invoke(StepResult(
-            success = false,
-            finished = false,
-            thinking = modelResponse.thinking,
-            action = actionJson,
-            message = "正在执行操作..."
-        ))
-        
-        val actionResult = executeActionWithRetry(
-            actionJson = actionJson,
-            screenWidth = screenWidth,
-            screenHeight = screenHeight,
-            currentApp = currentApp,
-            task = currentTask ?: userPrompt
-        )
-        Log.d(TAG, "========================================")
-        Log.d(TAG, "📊 操作执行结果")
-        Log.d(TAG, "成功: ${actionResult.success}")
-        Log.d(TAG, "完成: ${actionResult.shouldFinish}")
-        if (actionResult.message != null) {
-            Log.d(TAG, "消息: ${actionResult.message}")
-        }
-        Log.d(TAG, "========================================")
-        
-        // 更新失败计数
-        failureTracker.recordActionResult(actionJson, actionResult)
-        if (actionResult.message != null) {
-            Log.d(TAG, "操作消息: ${actionResult.message}")
-        }
-
-        // 检查是否需要用户介入
-        if (actionResult.requiresTakeover && actionResult.message != null) {
-            Log.w(TAG, "========================================")
-            Log.w(TAG, "⚠️ 需要用户介入")
-            Log.w(TAG, "原因: ${actionResult.message}")
-            Log.w(TAG, "========================================")
-            stateMachine.markWaitingForUser()
-            onUserInterventionCallback?.invoke(actionResult.message)
-            
-            sessionMemory.addInterventionMessage(actionResult.message)
-            
-            // 等待用户介入完成（给用户更多时间完成操作）
-            Log.d(TAG, "⏳ 等待用户介入完成（5秒）...")
-            onStepCallback?.invoke(StepResult(
-                success = true,
-                finished = false,
-                thinking = "等待用户完成操作: ${actionResult.message}",
-                action = "Take_over",
-                message = "等待用户操作完成，将在5秒后继续..."
-            ))
-            val confirmed = AgentSessionCoordinator.waitForUserConfirmation(timeoutMs = 180_000)
-            stateMachine.resumeAfterUserIntervention()
-            Log.d(TAG, if (confirmed) "✅ 用户介入完成，继续执行任务" else "⏰ 用户介入等待超时，继续执行任务")
-            
-            // 用户介入后，重新截图并继续执行
-            Log.d(TAG, "用户介入后，重新分析屏幕状态...")
-            // 不返回，继续执行下一步
-        }
-
-        // 在操作执行后，移除最后一条用户消息（包含图片的那条）的图片
-        sessionMemory.removeImageFromLastUserMessage()
-
-        // 添加助手回复到上下文
-        sessionMemory.addAssistantResponse(modelResponse.rawContent)
-        
-        // 如果操作失败，添加失败信息到上下文，帮助AI下次尝试不同方法
-        if (!actionResult.success && actionResult.message != null) {
-            sessionMemory.addFailureFeedback(actionResult.message)
-            skillExecutionAdvisor.buildFailureRecoveryMessage(
-                context = context,
-                currentApp = currentApp,
-                task = currentTask ?: userPrompt,
-                actionJson = actionJson,
-                actionResult = actionResult
-            )?.let { recoveryMessage ->
-                sessionMemory.add(Message("user", recoveryMessage))
-            }
-            Log.d(TAG, "已添加失败信息到上下文，帮助AI重新规划")
-        }
-
-        val stepResult = StepResult(
-            success = actionResult.success,
-            finished = actionResult.shouldFinish,
-            thinking = modelResponse.thinking,
-            action = actionJson,
-            message = actionResult.message
-        )
-
-        Log.d(TAG, "步骤 $stepCount 完成: success=${stepResult.success}, finished=${stepResult.finished}")
-        if (stepResult.finished) {
-            Log.d(TAG, "✅ 任务完成: ${stepResult.message}")
-        }
-        Log.d(TAG, "========================================")
-
-        onStepCallback?.invoke(stepResult)
-        stepResult
-    }
-
-    /**
-     * 带重试机制的操作执行
-     * 如果操作失败，会根据失败类型尝试不同的策略
-     */
-    private suspend fun executeActionWithRetry(
-        actionJson: String,
-        screenWidth: Int,
-        screenHeight: Int,
-        currentApp: String?,
-        task: String?
-    ): ActionResult {
-        // 如果连续失败次数过多，尝试让AI重新规划
-        failureTracker.maybeReplanHintForExecution()?.let { lastFailedAction ->
-            Log.w(TAG, "⚠️ 连续失败 ${failureTracker.consecutiveFailures} 次，可能需要重新规划策略")
-            sessionMemory.addReplanHint(lastFailedAction)
-        }
-
-        return try {
-            val primaryResult = actionHandler.execute(actionJson, screenWidth, screenHeight)
-            if (primaryResult.success) {
-                return primaryResult
-            }
-
-            val fallbackActions = skillActionInterceptor.fallbackActions(
-                context = context,
-                currentApp = currentApp,
-                task = task,
-                actionJson = actionJson,
-                actionResult = primaryResult
-            )
-
-            for ((index, fallbackAction) in fallbackActions.withIndex()) {
-                Log.w(TAG, "⚠️ 尝试 Skill Fallback #${index + 1}: $fallbackAction")
-                val fallbackResult = actionHandler.execute(fallbackAction, screenWidth, screenHeight)
-                if (fallbackResult.success) {
-                    return fallbackResult.copy(
-                        message = "Skill fallback 执行成功: ${fallbackResult.message ?: fallbackAction}"
-                    )
-                }
-            }
-
-            primaryResult
-        } catch (e: Exception) {
-            Log.e(TAG, "❌ 操作执行失败", e)
-            e.printStackTrace()
-            ActionResult(
-                success = false,
-                shouldFinish = false,
-                message = "操作执行失败: ${e.message}"
-            )
-        }
-    }
-
-    /**
      * 截图（使用 ScreenshotManager）
      * 仅在视觉模式或混合模式下使用
      */
@@ -503,6 +215,32 @@ class PhoneAgent(
         }
 
         manager.captureScreen()
+    }
+
+    private fun logStepRecord(record: HarnessStepRecord) {
+        Log.d(TAG, "========================================")
+        Log.d(TAG, "📊 Harness 步骤结果")
+        Log.d(TAG, "步骤: ${record.stepIndex}")
+        Log.d(TAG, "状态: ${record.status}")
+        Log.d(TAG, "应用: ${record.observation.currentApp}")
+        Log.d(TAG, "连续失败次数: ${failureTracker.consecutiveFailures}")
+        record.decision?.let {
+            Log.d(TAG, "思考: ${it.thinking.take(100)}...")
+            Log.d(TAG, "操作: ${it.actionJson.take(100)}...")
+        }
+        record.execution?.message?.let { Log.d(TAG, "消息: $it") }
+        record.errorMessage?.let { Log.d(TAG, "错误: $it") }
+        Log.d(TAG, "========================================")
+    }
+
+    private fun HarnessStepRecord.toStepResult(): StepResult {
+        return StepResult(
+            success = execution?.success ?: false,
+            finished = status == StepStatus.FINISHED,
+            thinking = decision?.thinking ?: (errorMessage ?: "步骤执行失败"),
+            action = decision?.actionJson ?: "",
+            message = execution?.message ?: errorMessage
+        )
     }
 
 }
