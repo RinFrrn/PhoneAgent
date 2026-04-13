@@ -7,3 +7,11 @@ data class EvalReport(
     val failedCases: Int,
     val results: List<EvalCaseResult>
 )
+
+data class ActiveEvalReport(
+    val generatedAt: Long,
+    val totalCases: Int,
+    val passedCases: Int,
+    val failedCases: Int,
+    val results: List<ActiveEvalCaseResult>
+)

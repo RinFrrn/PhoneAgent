@@ -2,6 +2,8 @@
   {
     "id": "launch-app-basic",
     "name": "Launch App Basic",
+    "taskGoal": "打开微信",
+    "taskMode": "HYBRID",
     "taskGoalContains": "打开",
     "expectSuccess": true,
     "maxSteps": 12,
@@ -10,6 +12,8 @@
   {
     "id": "search-basic",
     "name": "Search Basic",
+    "taskGoal": "打开微信并搜索联系人张三",
+    "taskMode": "HYBRID",
     "taskGoalContains": "搜索",
     "expectSuccess": true,
     "maxSteps": 18,

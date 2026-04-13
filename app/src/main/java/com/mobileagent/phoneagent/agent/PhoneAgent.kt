@@ -94,6 +94,18 @@ class PhoneAgent(
      * 运行任务
      */
     fun run(task: String, onComplete: (TaskOutcome) -> Unit) {
+        run(
+            TaskSpec(
+                id = "task-${System.currentTimeMillis()}",
+                goal = task,
+                mode = mode.name,
+                maxSteps = maxSteps
+            ),
+            onComplete
+        )
+    }
+
+    fun run(taskSpec: TaskSpec, onComplete: (TaskOutcome) -> Unit) {
         if (isTaskRunning()) {
             Log.w(TAG, "⚠️ Agent 已在运行中，忽略重复请求")
             return
@@ -101,14 +113,14 @@ class PhoneAgent(
 
         Log.d(TAG, "========================================")
         Log.d(TAG, "🚀 开始执行任务")
-        Log.d(TAG, "任务: $task")
+        Log.d(TAG, "任务: ${taskSpec.goal}")
         Log.d(TAG, "屏幕尺寸: ${screenWidth}x${screenHeight}")
         Log.d(TAG, "========================================")
 
         stateMachine.start()
         sessionMemory.clear()
         failureTracker.reset()
-        currentTask = task
+        currentTask = taskSpec.goal
 
         scope.launch {
             try {
@@ -148,12 +160,7 @@ class PhoneAgent(
                 Log.d(TAG, "系统提示词已添加")
 
                 harnessRuntime.run(
-                    taskSpec = TaskSpec(
-                        id = "task-${System.currentTimeMillis()}",
-                        goal = task,
-                        mode = mode.name,
-                        maxSteps = maxSteps
-                    ),
+                    taskSpec = taskSpec,
                     screenWidth = screenWidth,
                     screenHeight = screenHeight,
                     onStepRecord = { record ->
@@ -267,5 +274,6 @@ data class StepResult(
 
 data class TaskOutcome(
     val success: Boolean,
-    val message: String
+    val message: String,
+    val traceSessionId: String? = null
 )

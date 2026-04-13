@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
+import com.mobileagent.phoneagent.harness.spec.TaskSpec
 import com.mobileagent.phoneagent.harness.trace.SessionTrace
 import java.io.File
 
@@ -54,6 +55,34 @@ class EvalRunner(
             .toList()
     }
 
+    fun loadSessionById(sessionId: String): SessionTrace? {
+        val root = File(context.filesDir, "harness-traces")
+        if (!root.exists()) {
+            return null
+        }
+
+        return root.walkTopDown()
+            .firstOrNull { it.isFile && it.name == "session-$sessionId.json" }
+            ?.let(::readSessionTrace)
+    }
+
+    fun evaluateSession(
+        evalCase: EvalCase,
+        session: SessionTrace
+    ): EvalCaseResult {
+        return evaluateMatchedCase(evalCase, session)
+    }
+
+    fun buildTaskSpec(evalCase: EvalCase): TaskSpec? {
+        val taskGoal = evalCase.taskGoal ?: return null
+        return TaskSpec(
+            id = "eval-${evalCase.id}",
+            goal = taskGoal,
+            mode = evalCase.taskMode ?: evalCase.mode ?: "HYBRID",
+            maxSteps = evalCase.taskMaxSteps ?: evalCase.maxSteps ?: 20
+        )
+    }
+
     private fun readSessionTrace(file: File): SessionTrace? {
         return runCatching {
             gson.fromJson(file.readText(), SessionTrace::class.java)
@@ -75,6 +104,13 @@ class EvalRunner(
                 reasons = listOf("未找到匹配的 session trace")
             )
 
+        return evaluateMatchedCase(evalCase, matchedSession)
+    }
+
+    private fun evaluateMatchedCase(
+        evalCase: EvalCase,
+        matchedSession: SessionTrace
+    ): EvalCaseResult {
         val reasons = mutableListOf<String>()
 
         if (matchedSession.success != evalCase.expectSuccess) {

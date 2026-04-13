@@ -89,7 +89,7 @@ class HarnessRuntime(
                     stateMachine.markFailed()
                     val message = observation.failureMessage
                     traceStore.closeSession(traceSessionId, success = false, outcomeMessage = message)
-                    onComplete(TaskOutcome(false, message))
+                    onComplete(TaskOutcome(false, message, traceSessionId))
                     return
                 }
 
@@ -125,7 +125,7 @@ class HarnessRuntime(
                     onStepRecord?.invoke(record)
                     stateMachine.markFailed()
                     traceStore.closeSession(traceSessionId, success = false, outcomeMessage = message)
-                    onComplete(TaskOutcome(false, message))
+                    onComplete(TaskOutcome(false, message, traceSessionId))
                     return
                 }
 
@@ -215,7 +215,7 @@ class HarnessRuntime(
                     stateMachine.markCompleted()
                     val message = effectiveExecution.message ?: "任务完成"
                     traceStore.closeSession(traceSessionId, success = true, outcomeMessage = message)
-                    onComplete(TaskOutcome(true, message))
+                    onComplete(TaskOutcome(true, message, traceSessionId))
                     return
                 }
 
@@ -229,7 +229,7 @@ class HarnessRuntime(
 
             stateMachine.markFailed()
             traceStore.closeSession(traceSessionId, success = false, outcomeMessage = "达到最大步数仍未完成")
-            onComplete(TaskOutcome(false, "达到最大步数仍未完成"))
+            onComplete(TaskOutcome(false, "达到最大步数仍未完成", traceSessionId))
         } catch (e: Exception) {
             traceStore.closeSession(traceSessionId, success = false, outcomeMessage = "运行时异常: ${e.message}")
             throw e
