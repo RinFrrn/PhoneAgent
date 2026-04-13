@@ -252,8 +252,8 @@ class PhoneAgentAccessibilityService : AccessibilityService() {
         val screenWidth = displayMetrics.widthPixels.toFloat()
         val screenHeight = displayMetrics.heightPixels.toFloat()
         
-        if (startX < 0 || startX > screenWidth || startY < 0 || startY > screenHeight ||
-            endX < 0 || endX > screenWidth || endY < 0 || endY > screenHeight) {
+        if (startX < 0 || startX >= screenWidth || startY < 0 || startY >= screenHeight ||
+            endX < 0 || endX >= screenWidth || endY < 0 || endY >= screenHeight) {
             Log.e(TAG, "❌ 滑动坐标超出屏幕范围: ($startX, $startY) -> ($endX, $endY), 屏幕尺寸: ${screenWidth}x${screenHeight}")
             callback(false)
             return
@@ -591,10 +591,32 @@ class PhoneAgentAccessibilityService : AccessibilityService() {
             Log.d(TAG, "包名 $packageName 对应应用: $appName")
             appName
         } catch (e: PackageManager.NameNotFoundException) {
-            Log.w(TAG, "无法找到包名对应的应用: $packageName", e)
-            null
+            Log.w(TAG, "无法直接获取包名对应的应用，尝试从 Launcher 回退: $packageName", e)
+            getLauncherLabelFromPackage(packageName)
         } catch (e: Exception) {
             Log.w(TAG, "获取应用名称失败: $packageName", e)
+            null
+        }
+    }
+
+    private fun getLauncherLabelFromPackage(packageName: String): String? {
+        return try {
+            val launcherIntent = android.content.Intent(android.content.Intent.ACTION_MAIN).apply {
+                addCategory(android.content.Intent.CATEGORY_LAUNCHER)
+            }
+            val resolveInfo = packageManager
+                .queryIntentActivities(launcherIntent, PackageManager.MATCH_ALL)
+                .firstOrNull { it.activityInfo?.packageName == packageName }
+
+            val label = resolveInfo?.loadLabel(packageManager)?.toString()
+            if (label != null) {
+                Log.d(TAG, "通过 Launcher 查询到应用名称: $packageName -> $label")
+            } else {
+                Log.w(TAG, "Launcher 查询仍未找到应用名称: $packageName")
+            }
+            label
+        } catch (e: Exception) {
+            Log.w(TAG, "通过 Launcher 查询应用名称失败: $packageName", e)
             null
         }
     }

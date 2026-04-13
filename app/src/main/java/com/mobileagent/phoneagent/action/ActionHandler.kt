@@ -67,9 +67,14 @@ class ActionHandler(
         screenWidth: Int,
         screenHeight: Int
     ): Pair<Int, Int> {
-        // 相对坐标范围是 0-1000，转换为绝对像素
-        val absoluteX = (relativeX / 1000.0 * screenWidth).toInt()
-        val absoluteY = (relativeY / 1000.0 * screenHeight).toInt()
+        val safeWidth = screenWidth.coerceAtLeast(1)
+        val safeHeight = screenHeight.coerceAtLeast(1)
+        val normalizedX = relativeX.coerceIn(0, 1000)
+        val normalizedY = relativeY.coerceIn(0, 1000)
+
+        // 相对坐标范围是 0-1000，映射到有效像素范围 0..(size-1)
+        val absoluteX = ((normalizedX / 1000.0) * (safeWidth - 1)).toInt().coerceIn(0, safeWidth - 1)
+        val absoluteY = ((normalizedY / 1000.0) * (safeHeight - 1)).toInt().coerceIn(0, safeHeight - 1)
         return Pair(absoluteX, absoluteY)
     }
 

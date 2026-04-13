@@ -44,7 +44,7 @@ object AppLauncher {
 
     private fun getPackageNameInternal(context: Context, appName: String): String? {
         // 先检查缓存
-        val cacheKey = appName.lowercase().trim()
+        val cacheKey = normalizeForMatch(appName)
         if (appNameCache.containsKey(cacheKey)) {
             val cached = appNameCache[cacheKey]
             Log.d(TAG, "从缓存获取: $appName -> $cached")
@@ -56,15 +56,16 @@ object AppLauncher {
         val packageManager = context.packageManager
         val launcherApps = queryLauncherApps(packageManager)
         
-        val normalizedAppName = appName.trim().lowercase()
+        val normalizedAppName = normalizeForMatch(appName)
         
         // 精确匹配
         for (resolveInfo in launcherApps) {
             try {
                 val label = resolveInfo.loadLabel(packageManager).toString()
-                
-                if (label.equals(appName, ignoreCase = true) || 
-                    label.lowercase() == normalizedAppName) {
+                val normalizedLabel = normalizeForMatch(label)
+
+                if (label.equals(appName, ignoreCase = true) ||
+                    normalizedLabel == normalizedAppName) {
                     val packageName = resolveInfo.activityInfo.packageName
                     Log.d(TAG, "✅ 精确匹配: $appName -> $packageName (显示名称: $label)")
                     appNameCache[cacheKey] = packageName
@@ -83,26 +84,26 @@ object AppLauncher {
         for (resolveInfo in launcherApps) {
             try {
                 val label = resolveInfo.loadLabel(packageManager).toString()
-                val labelLower = label.lowercase()
+                val normalizedLabel = normalizeForMatch(label)
                 val packageName = resolveInfo.activityInfo.packageName
                 
                 // 计算匹配分数
                 var score = 0
-                if (labelLower.contains(normalizedAppName)) {
+                if (normalizedLabel.contains(normalizedAppName) || normalizedAppName.contains(normalizedLabel)) {
                     score += 10
                     // 如果开头匹配，分数更高
-                    if (labelLower.startsWith(normalizedAppName)) {
+                    if (normalizedLabel.startsWith(normalizedAppName)) {
                         score += 5
                     }
                     // 如果完全包含，分数更高
-                    if (normalizedAppName.length >= 3 && labelLower.contains(normalizedAppName)) {
+                    if (normalizedAppName.length >= 2 && normalizedLabel.contains(normalizedAppName)) {
                         score += normalizedAppName.length
                     }
                 }
                 
                 // 检查包名是否包含关键词（作为备选）
-                if (packageName.lowercase().contains(normalizedAppName.replace(" ", ""))) {
-                    score += 2
+                if (packageName.lowercase().contains(normalizedAppName)) {
+                    score += 4
                 }
                 
                 if (score > bestScore) {
@@ -120,9 +121,16 @@ object AppLauncher {
             appNameCache[cacheKey] = bestMatch
             return bestMatch
         }
+
+        // Fallback：遍历已安装应用的 application label，只保留可启动应用
+        val installedMatch = findInstalledLaunchableApp(packageManager, normalizedAppName)
+        if (installedMatch != null) {
+            Log.d(TAG, "✅ 已安装应用 fallback 匹配成功: $appName -> $installedMatch")
+            appNameCache[cacheKey] = installedMatch
+            return installedMatch
+        }
         
         Log.w(TAG, "❌ 未找到应用: $appName")
-        appNameCache[cacheKey] = null
         return null
     }
     
@@ -162,15 +170,16 @@ object AppLauncher {
         val results = mutableListOf<Pair<String, String>>()
         val packageManager = context.packageManager
         val launcherApps = queryLauncherApps(packageManager)
-        val normalizedKeyword = keyword.trim().lowercase()
+        val normalizedKeyword = normalizeForMatch(keyword)
         
         for (resolveInfo in launcherApps) {
             try {
                 val label = resolveInfo.loadLabel(packageManager).toString()
-                val labelLower = label.lowercase()
+                val normalizedLabel = normalizeForMatch(label)
                 val packageName = resolveInfo.activityInfo.packageName
                 
-                if (labelLower.contains(normalizedKeyword) || 
+                if (normalizedLabel.contains(normalizedKeyword) ||
+                    normalizedKeyword.contains(normalizedLabel) ||
                     packageName.lowercase().contains(normalizedKeyword)) {
                     results.add(Pair(label, packageName))
                     if (results.size >= limit) {
@@ -199,5 +208,42 @@ object AppLauncher {
         }
         return packageManager.queryIntentActivities(launcherIntent, PackageManager.MATCH_ALL)
             .distinctBy { it.activityInfo.packageName }
+    }
+
+    private fun findInstalledLaunchableApp(
+        packageManager: PackageManager,
+        normalizedAppName: String
+    ): String? {
+        return try {
+            packageManager.getInstalledApplications(PackageManager.GET_META_DATA)
+                .asSequence()
+                .filter { appInfo -> packageManager.getLaunchIntentForPackage(appInfo.packageName) != null }
+                .mapNotNull { appInfo ->
+                    val label = runCatching {
+                        packageManager.getApplicationLabel(appInfo).toString()
+                    }.getOrNull() ?: return@mapNotNull null
+                    val normalizedLabel = normalizeForMatch(label)
+                    val score = when {
+                        normalizedLabel == normalizedAppName -> 100
+                        normalizedLabel.contains(normalizedAppName) -> 50 + normalizedAppName.length
+                        normalizedAppName.contains(normalizedLabel) -> 20 + normalizedLabel.length
+                        appInfo.packageName.lowercase().contains(normalizedAppName) -> 10
+                        else -> 0
+                    }
+                    if (score > 0) Triple(appInfo.packageName, label, score) else null
+                }
+                .maxByOrNull { it.third }
+                ?.first
+        } catch (e: Exception) {
+            Log.w(TAG, "已安装应用 fallback 匹配失败", e)
+            null
+        }
+    }
+
+    private fun normalizeForMatch(text: String): String {
+        return text
+            .trim()
+            .lowercase()
+            .replace("[\\s\\p{Punct}\\p{IsPunctuation}，。、“”‘’【】（）《》·•_\\-]+".toRegex(), "")
     }
 }
