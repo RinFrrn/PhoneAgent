@@ -15,6 +15,8 @@ import com.mobileagent.phoneagent.harness.observe.Observation
 import com.mobileagent.phoneagent.harness.observe.ObservationCollector
 import com.mobileagent.phoneagent.harness.plan.Planner
 import com.mobileagent.phoneagent.harness.spec.TaskSpec
+import com.mobileagent.phoneagent.harness.verify.StepVerifier
+import com.mobileagent.phoneagent.harness.verify.VerificationResult
 import com.mobileagent.phoneagent.model.Message
 import com.mobileagent.phoneagent.skill.SkillExecutionAdvisor
 import kotlinx.coroutines.delay
@@ -27,7 +29,8 @@ class HarnessRuntime(
     private val sessionMemory: SessionMemory,
     private val stateMachine: AgentStateMachine,
     private val failureTracker: FailureTracker,
-    private val skillExecutionAdvisor: SkillExecutionAdvisor
+    private val skillExecutionAdvisor: SkillExecutionAdvisor,
+    private val stepVerifier: StepVerifier
 ) {
     private val tag = "HarnessRuntime"
 
@@ -55,6 +58,7 @@ class HarnessRuntime(
                     observation = observation,
                     decision = null,
                     execution = null,
+                    verification = null,
                     status = StepStatus.OBSERVATION_FAILED,
                     errorMessage = observation.failureMessage
                 )
@@ -74,6 +78,7 @@ class HarnessRuntime(
                     observation = observation,
                     decision = null,
                     execution = null,
+                    verification = null,
                     status = StepStatus.FAILED,
                     errorMessage = "模型请求失败: ${e.message}"
                 )
@@ -93,12 +98,20 @@ class HarnessRuntime(
                 )
             )
 
+            val afterObservation = collectPostExecutionObservation(execution)
+            val verification = stepVerifier.verify(
+                before = observation,
+                execution = execution,
+                after = afterObservation,
+                taskSpec = taskSpec
+            )
+
             failureTracker.recordActionResult(
                 decision.actionJson,
                 ActionResult(
-                    success = execution.success,
+                    success = execution.success && verification.passed,
                     shouldFinish = execution.shouldFinish,
-                    message = execution.message,
+                    message = buildResultMessage(execution, verification),
                     requiresTakeover = execution.requiresTakeover
                 )
             )
@@ -122,18 +135,24 @@ class HarnessRuntime(
 
             val status = when {
                 execution.shouldFinish -> StepStatus.FINISHED
-                execution.success -> StepStatus.EXECUTED
+                execution.success && verification.passed -> StepStatus.EXECUTED
                 else -> StepStatus.FAILED
             }
+
+            val effectiveExecution = execution.copy(
+                success = execution.success && verification.passed,
+                message = buildResultMessage(execution, verification)
+            )
 
             onStepRecord?.invoke(
                 HarnessStepRecord(
                     stepIndex = stepIndex,
                     observation = observation,
                     decision = decision,
-                    execution = execution,
+                    execution = effectiveExecution,
+                    verification = verification,
                     status = status,
-                    errorMessage = if (status == StepStatus.FAILED) execution.message else null
+                    errorMessage = if (status == StepStatus.FAILED) effectiveExecution.message else null
                 )
             )
 
@@ -152,6 +171,29 @@ class HarnessRuntime(
 
         stateMachine.markFailed()
         onComplete(TaskOutcome(false, "达到最大步数仍未完成"))
+    }
+
+    private suspend fun collectPostExecutionObservation(execution: ExecutionResult): Observation? {
+        if (execution.shouldFinish || execution.requiresTakeover || !execution.success) {
+            return null
+        }
+        return try {
+            observationCollector.collect()
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun buildResultMessage(
+        execution: ExecutionResult,
+        verification: VerificationResult
+    ): String {
+        val baseMessage = execution.message ?: "动作执行完成"
+        return if (verification.passed) {
+            "$baseMessage | 验证通过: ${verification.reason}"
+        } else {
+            "$baseMessage | 验证失败: ${verification.reason}"
+        }
     }
 
     private fun addFailureRecoveryHints(

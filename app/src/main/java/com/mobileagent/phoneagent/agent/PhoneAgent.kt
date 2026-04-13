@@ -19,6 +19,7 @@ import com.mobileagent.phoneagent.harness.runtime.HarnessRuntime
 import com.mobileagent.phoneagent.harness.runtime.HarnessStepRecord
 import com.mobileagent.phoneagent.harness.runtime.StepStatus
 import com.mobileagent.phoneagent.harness.spec.TaskSpec
+import com.mobileagent.phoneagent.harness.verify.GenericStepVerifier
 import com.mobileagent.phoneagent.model.Message
 import com.mobileagent.phoneagent.model.ModelClient
 import com.mobileagent.phoneagent.service.PhoneAgentAccessibilityService
@@ -70,6 +71,7 @@ class PhoneAgent(
     private val observationCollector = DefaultObservationCollector(screenObserver)
     private val planner = LlmPlanner(context, modelClient, responseActionParser, skillPromptAugmentor)
     private val actionExecutor = DefaultActionExecutor(context, actionHandler, skillActionInterceptor)
+    private val stepVerifier = GenericStepVerifier()
     private val harnessRuntime = HarnessRuntime(
         context = context,
         observationCollector = observationCollector,
@@ -78,7 +80,8 @@ class PhoneAgent(
         sessionMemory = sessionMemory,
         stateMachine = stateMachine,
         failureTracker = failureTracker,
-        skillExecutionAdvisor = skillExecutionAdvisor
+        skillExecutionAdvisor = skillExecutionAdvisor,
+        stepVerifier = stepVerifier
     )
     
     private var screenshotManager: ScreenshotManager? = null
@@ -229,6 +232,9 @@ class PhoneAgent(
             Log.d(TAG, "操作: ${it.actionJson.take(100)}...")
         }
         record.execution?.message?.let { Log.d(TAG, "消息: $it") }
+        record.verification?.let {
+            Log.d(TAG, "验证: passed=${it.passed}, confidence=${it.confidence}, reason=${it.reason}")
+        }
         record.errorMessage?.let { Log.d(TAG, "错误: $it") }
         Log.d(TAG, "========================================")
     }
