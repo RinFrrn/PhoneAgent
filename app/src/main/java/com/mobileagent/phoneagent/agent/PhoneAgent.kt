@@ -15,12 +15,14 @@ import com.mobileagent.phoneagent.action.ActionHandler
 import com.mobileagent.phoneagent.harness.act.DefaultActionExecutor
 import com.mobileagent.phoneagent.harness.observe.DefaultObservationCollector
 import com.mobileagent.phoneagent.harness.plan.LlmPlanner
+import com.mobileagent.phoneagent.harness.recover.DefaultRecoveryPolicy
 import com.mobileagent.phoneagent.harness.recover.FailureClassifier
 import com.mobileagent.phoneagent.harness.runtime.HarnessRuntime
 import com.mobileagent.phoneagent.harness.runtime.HarnessStepRecord
 import com.mobileagent.phoneagent.harness.runtime.StepStatus
 import com.mobileagent.phoneagent.harness.spec.TaskSpec
 import com.mobileagent.phoneagent.harness.trace.FileTraceStore
+import com.mobileagent.phoneagent.harness.verify.AppAwareStepVerifier
 import com.mobileagent.phoneagent.harness.verify.GenericStepVerifier
 import com.mobileagent.phoneagent.model.Message
 import com.mobileagent.phoneagent.model.ModelClient
@@ -73,9 +75,10 @@ class PhoneAgent(
     private val observationCollector = DefaultObservationCollector(screenObserver)
     private val planner = LlmPlanner(context, modelClient, responseActionParser, skillPromptAugmentor)
     private val actionExecutor = DefaultActionExecutor(context, actionHandler, skillActionInterceptor)
-    private val stepVerifier = GenericStepVerifier()
+    private val stepVerifier = AppAwareStepVerifier(context, GenericStepVerifier())
     private val traceStore = FileTraceStore(context)
     private val failureClassifier = FailureClassifier()
+    private val recoveryPolicy = DefaultRecoveryPolicy()
     private val harnessRuntime = HarnessRuntime(
         context = context,
         observationCollector = observationCollector,
@@ -87,7 +90,8 @@ class PhoneAgent(
         skillExecutionAdvisor = skillExecutionAdvisor,
         stepVerifier = stepVerifier,
         traceStore = traceStore,
-        failureClassifier = failureClassifier
+        failureClassifier = failureClassifier,
+        recoveryPolicy = recoveryPolicy
     )
     
     private var screenshotManager: ScreenshotManager? = null

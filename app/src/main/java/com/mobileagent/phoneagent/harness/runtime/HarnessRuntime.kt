@@ -15,6 +15,7 @@ import com.mobileagent.phoneagent.harness.observe.Observation
 import com.mobileagent.phoneagent.harness.observe.ObservationCollector
 import com.mobileagent.phoneagent.harness.plan.Planner
 import com.mobileagent.phoneagent.harness.recover.FailureClassifier
+import com.mobileagent.phoneagent.harness.recover.DefaultRecoveryPolicy
 import com.mobileagent.phoneagent.harness.recover.FailureType
 import com.mobileagent.phoneagent.harness.spec.TaskSpec
 import com.mobileagent.phoneagent.harness.trace.StepTrace
@@ -36,7 +37,8 @@ class HarnessRuntime(
     private val skillExecutionAdvisor: SkillExecutionAdvisor,
     private val stepVerifier: StepVerifier,
     private val traceStore: TraceStore,
-    private val failureClassifier: FailureClassifier
+    private val failureClassifier: FailureClassifier,
+    private val recoveryPolicy: DefaultRecoveryPolicy
 ) {
     private val tag = "HarnessRuntime"
 
@@ -183,6 +185,7 @@ class HarnessRuntime(
                     decision = decision.actionJson,
                     execution = effectiveExecution
                 )
+                applyRecoveryDecision(taskSpec, observation, effectiveExecution)
 
                 val status = when {
                     execution.shouldFinish -> StepStatus.FINISHED
@@ -239,8 +242,14 @@ class HarnessRuntime(
             }
 
             stateMachine.markFailed()
-            traceStore.closeSession(traceSessionId, success = false, outcomeMessage = "达到最大步数仍未完成")
-            onComplete(TaskOutcome(false, "达到最大步数仍未完成", traceSessionId))
+            val message = recoveryPolicy.decide(
+                failureType = FailureType.MAX_STEPS_EXCEEDED,
+                taskSpec = taskSpec,
+                observation = Observation(currentApp = taskSpec.goal, contentItems = emptyList()),
+                execution = null
+            ).userMessage ?: "达到最大步数仍未完成"
+            traceStore.closeSession(traceSessionId, success = false, outcomeMessage = message)
+            onComplete(TaskOutcome(false, message, traceSessionId))
         } catch (e: Exception) {
             traceStore.closeSession(traceSessionId, success = false, outcomeMessage = "运行时异常: ${e.message}")
             throw e
@@ -295,5 +304,23 @@ class HarnessRuntime(
         ) ?: return
 
         sessionMemory.add(Message("user", recoveryMessage))
+    }
+
+    private fun applyRecoveryDecision(
+        taskSpec: TaskSpec,
+        observation: Observation,
+        execution: ExecutionResult
+    ) {
+        val failureType = execution.failureType ?: return
+        val decision = recoveryPolicy.decide(
+            failureType = failureType,
+            taskSpec = taskSpec,
+            observation = observation,
+            execution = execution
+        )
+        decision.userMessage?.let { sessionMemory.add(Message("user", it)) }
+        if (decision.stopTask) {
+            stateMachine.markFailed()
+        }
     }
 }
