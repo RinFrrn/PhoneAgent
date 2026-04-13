@@ -1,5 +1,7 @@
 package com.mobileagent.phoneagent.harness.act
 
+import com.mobileagent.phoneagent.harness.recover.FailureType
+
 data class ExecutionRequest(
     val actionJson: String,
     val screenWidth: Int,
@@ -13,5 +15,6 @@ data class ExecutionResult(
     val shouldFinish: Boolean,
     val message: String?,
     val actionJson: String,
-    val requiresTakeover: Boolean = false
+    val requiresTakeover: Boolean = false,
+    val failureType: FailureType? = null
 )

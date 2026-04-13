@@ -15,6 +15,7 @@ import com.mobileagent.phoneagent.action.ActionHandler
 import com.mobileagent.phoneagent.harness.act.DefaultActionExecutor
 import com.mobileagent.phoneagent.harness.observe.DefaultObservationCollector
 import com.mobileagent.phoneagent.harness.plan.LlmPlanner
+import com.mobileagent.phoneagent.harness.recover.FailureClassifier
 import com.mobileagent.phoneagent.harness.runtime.HarnessRuntime
 import com.mobileagent.phoneagent.harness.runtime.HarnessStepRecord
 import com.mobileagent.phoneagent.harness.runtime.StepStatus
@@ -74,6 +75,7 @@ class PhoneAgent(
     private val actionExecutor = DefaultActionExecutor(context, actionHandler, skillActionInterceptor)
     private val stepVerifier = GenericStepVerifier()
     private val traceStore = FileTraceStore(context)
+    private val failureClassifier = FailureClassifier()
     private val harnessRuntime = HarnessRuntime(
         context = context,
         observationCollector = observationCollector,
@@ -84,7 +86,8 @@ class PhoneAgent(
         failureTracker = failureTracker,
         skillExecutionAdvisor = skillExecutionAdvisor,
         stepVerifier = stepVerifier,
-        traceStore = traceStore
+        traceStore = traceStore,
+        failureClassifier = failureClassifier
     )
     
     private var screenshotManager: ScreenshotManager? = null
@@ -245,6 +248,7 @@ class PhoneAgent(
         record.verification?.let {
             Log.d(TAG, "验证: passed=${it.passed}, confidence=${it.confidence}, reason=${it.reason}")
         }
+        record.execution?.failureType?.let { Log.d(TAG, "失败类型: $it") }
         record.errorMessage?.let { Log.d(TAG, "错误: $it") }
         Log.d(TAG, "========================================")
     }

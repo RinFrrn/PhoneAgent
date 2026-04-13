@@ -14,6 +14,8 @@ import com.mobileagent.phoneagent.harness.act.ExecutionResult
 import com.mobileagent.phoneagent.harness.observe.Observation
 import com.mobileagent.phoneagent.harness.observe.ObservationCollector
 import com.mobileagent.phoneagent.harness.plan.Planner
+import com.mobileagent.phoneagent.harness.recover.FailureClassifier
+import com.mobileagent.phoneagent.harness.recover.FailureType
 import com.mobileagent.phoneagent.harness.spec.TaskSpec
 import com.mobileagent.phoneagent.harness.trace.StepTrace
 import com.mobileagent.phoneagent.harness.trace.TraceStore
@@ -33,7 +35,8 @@ class HarnessRuntime(
     private val failureTracker: FailureTracker,
     private val skillExecutionAdvisor: SkillExecutionAdvisor,
     private val stepVerifier: StepVerifier,
-    private val traceStore: TraceStore
+    private val traceStore: TraceStore,
+    private val failureClassifier: FailureClassifier
 ) {
     private val tag = "HarnessRuntime"
 
@@ -82,7 +85,8 @@ class HarnessRuntime(
                             execution = null,
                             observationAfter = null,
                             verification = null,
-                            errorMessage = observation.failureMessage
+                            errorMessage = observation.failureMessage,
+                            failureType = failureClassifier.classifyObservationFailure(observation.failureMessage)
                         )
                     )
                     onStepRecord?.invoke(record)
@@ -119,7 +123,8 @@ class HarnessRuntime(
                             execution = null,
                             observationAfter = null,
                             verification = null,
-                            errorMessage = message
+                            errorMessage = message,
+                            failureType = failureClassifier.classifyModelFailure(message)
                         )
                     )
                     onStepRecord?.invoke(record)
@@ -169,7 +174,8 @@ class HarnessRuntime(
                 sessionMemory.addAssistantResponse(decision.rawResponse)
                 val effectiveExecution = execution.copy(
                     success = execution.success && verification.passed,
-                    message = buildResultMessage(execution, verification)
+                    message = buildResultMessage(execution, verification),
+                    failureType = execution.failureType ?: failureClassifier.classifyExecutionFailure(execution, verification)
                 )
                 addFailureRecoveryHints(
                     observation = observation,
@@ -195,7 +201,12 @@ class HarnessRuntime(
                         execution = effectiveExecution,
                         observationAfter = afterObservation,
                         verification = verification,
-                        errorMessage = if (status == StepStatus.FAILED) effectiveExecution.message else null
+                        errorMessage = if (status == StepStatus.FAILED) effectiveExecution.message else null,
+                        failureType = if (status == StepStatus.FAILED) {
+                            effectiveExecution.failureType ?: FailureType.UNKNOWN
+                        } else {
+                            null
+                        }
                     )
                 )
 

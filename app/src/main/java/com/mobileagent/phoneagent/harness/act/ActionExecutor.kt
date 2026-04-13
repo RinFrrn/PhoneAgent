@@ -3,6 +3,7 @@ package com.mobileagent.phoneagent.harness.act
 import android.content.Context
 import android.util.Log
 import com.mobileagent.phoneagent.action.ActionHandler
+import com.mobileagent.phoneagent.harness.recover.FailureType
 import com.mobileagent.phoneagent.skill.SkillActionInterceptor
 
 interface ActionExecutor {
@@ -56,7 +57,8 @@ class DefaultActionExecutor(
                 success = false,
                 shouldFinish = false,
                 message = "操作执行失败: ${e.message}",
-                actionJson = request.actionJson
+                actionJson = request.actionJson,
+                failureType = FailureType.ACTION_EXECUTION_FAILED
             )
         }
     }
@@ -67,7 +69,14 @@ class DefaultActionExecutor(
             shouldFinish = shouldFinish,
             message = message,
             actionJson = actionJson,
-            requiresTakeover = requiresTakeover
+            requiresTakeover = requiresTakeover,
+            failureType = when {
+                requiresTakeover -> FailureType.USER_TAKEOVER_REQUIRED
+                !success && message?.contains("未找到应用") == true -> FailureType.APP_NOT_FOUND
+                !success && message?.contains("无障碍服务未启用") == true -> FailureType.PERMISSION_MISSING
+                !success -> FailureType.ACTION_EXECUTION_FAILED
+                else -> null
+            }
         )
     }
 }
