@@ -19,6 +19,7 @@ import com.mobileagent.phoneagent.harness.runtime.HarnessRuntime
 import com.mobileagent.phoneagent.harness.runtime.HarnessStepRecord
 import com.mobileagent.phoneagent.harness.runtime.StepStatus
 import com.mobileagent.phoneagent.harness.spec.TaskSpec
+import com.mobileagent.phoneagent.harness.trace.FileTraceStore
 import com.mobileagent.phoneagent.harness.verify.GenericStepVerifier
 import com.mobileagent.phoneagent.model.Message
 import com.mobileagent.phoneagent.model.ModelClient
@@ -72,6 +73,7 @@ class PhoneAgent(
     private val planner = LlmPlanner(context, modelClient, responseActionParser, skillPromptAugmentor)
     private val actionExecutor = DefaultActionExecutor(context, actionHandler, skillActionInterceptor)
     private val stepVerifier = GenericStepVerifier()
+    private val traceStore = FileTraceStore(context)
     private val harnessRuntime = HarnessRuntime(
         context = context,
         observationCollector = observationCollector,
@@ -81,7 +83,8 @@ class PhoneAgent(
         stateMachine = stateMachine,
         failureTracker = failureTracker,
         skillExecutionAdvisor = skillExecutionAdvisor,
-        stepVerifier = stepVerifier
+        stepVerifier = stepVerifier,
+        traceStore = traceStore
     )
     
     private var screenshotManager: ScreenshotManager? = null
