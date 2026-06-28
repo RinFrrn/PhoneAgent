@@ -106,16 +106,6 @@ class ActionHandler(
                 val y = absoluteY.toFloat()
                 Log.d(TAG, "👆 点击操作: 相对坐标(${action.x}, ${action.y}) -> 绝对坐标($x, $y)")
                 
-                // 检查无障碍服务是否可用
-                if (!com.mobileagent.phoneagent.service.PhoneAgentAccessibilityService.isServiceEnabled()) {
-                    Log.e(TAG, "❌ 无障碍服务未启用，无法执行点击操作")
-                    return ActionResult(
-                        success = false,
-                        shouldFinish = false,
-                        message = "无障碍服务未启用，请在系统设置中启用无障碍服务"
-                    )
-                }
-                
                 // 使用协程的 CompletableDeferred 来等待异步回调
                 val deferred = CompletableDeferred<Boolean>()
                 

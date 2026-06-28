@@ -156,7 +156,6 @@
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:checked="true"
                 android:text="视觉模式" />
 
             <RadioButton
@@ -164,6 +163,7 @@
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
+                android:checked="true"
                 android:text="无障碍模式" />
 
             <RadioButton

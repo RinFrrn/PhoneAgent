@@ -29,6 +29,7 @@ import com.mobileagent.phoneagent.harness.act.PopupConfirmationStatus
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import java.util.concurrent.CopyOnWriteArraySet
 
 /**
  * 无障碍服务 - 用于模拟用户操作
@@ -42,8 +43,18 @@ class PhoneAgentAccessibilityService : AccessibilityService() {
         // 单例实例
         @Volatile
         private var instance: PhoneAgentAccessibilityService? = null
+        private val connectionListeners = CopyOnWriteArraySet<(PhoneAgentAccessibilityService?) -> Unit>()
         
         fun getInstance(): PhoneAgentAccessibilityService? = instance
+
+        fun addConnectionListener(listener: (PhoneAgentAccessibilityService?) -> Unit) {
+            connectionListeners.add(listener)
+            instance?.let(listener)
+        }
+
+        fun removeConnectionListener(listener: (PhoneAgentAccessibilityService?) -> Unit) {
+            connectionListeners.remove(listener)
+        }
         
         /**
          * 检查无障碍服务是否已启用并可用
@@ -62,6 +73,7 @@ class PhoneAgentAccessibilityService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
+        connectionListeners.forEach { it(this) }
         Log.d(TAG, "✅ 无障碍服务已连接")
         Log.d(TAG, "服务状态: 已启用，可以执行手势操作")
     }
@@ -69,6 +81,7 @@ class PhoneAgentAccessibilityService : AccessibilityService() {
     override fun onDestroy() {
         super.onDestroy()
         instance = null
+        connectionListeners.forEach { it(null) }
         Log.d(TAG, "无障碍服务已销毁")
     }
 

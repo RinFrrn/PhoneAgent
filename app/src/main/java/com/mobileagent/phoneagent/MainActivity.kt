@@ -15,6 +15,7 @@ import android.Manifest
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.view.accessibility.AccessibilityManager
 import android.content.ActivityNotFoundException
+import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.media.projection.MediaProjectionManager
@@ -34,6 +35,7 @@ import com.mobileagent.phoneagent.agent.TaskOutcome
 import com.mobileagent.phoneagent.databinding.ActivityMainBinding
 import com.mobileagent.phoneagent.harness.eval.ActiveEvalRunner
 import com.mobileagent.phoneagent.harness.eval.ActiveEvalReport
+import com.mobileagent.phoneagent.harness.eval.EvalCase
 import com.mobileagent.phoneagent.harness.eval.EvalRunner
 import com.mobileagent.phoneagent.harness.spec.TaskSpec
 import com.mobileagent.phoneagent.model.ModelClient
@@ -44,6 +46,7 @@ import com.mobileagent.phoneagent.utils.ActivityVisibilityTracker
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.coroutines.resume
 
 class MainActivity : AppCompatActivity() {
@@ -60,6 +63,7 @@ class MainActivity : AppCompatActivity() {
         private const val REQUEST_CODE_VOICE_INPUT = 103
         private const val REQUEST_CODE_AUDIO = 104
         private const val REQUEST_CODE_OVERLAY = 105
+        private const val ACCESSIBILITY_CONNECT_TIMEOUT_MS = 30_000L
     }
     
     private var isVoiceInputActive = false
@@ -184,12 +188,20 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun isAccessibilityServiceEnabled(): Boolean {
+        val expectedComponent = ComponentName(this, PhoneAgentAccessibilityService::class.java)
         val accessibilityManager = getSystemService(ACCESSIBILITY_SERVICE) as? AccessibilityManager
         val enabledServices = accessibilityManager
             ?.getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_ALL_MASK)
             .orEmpty()
 
-        if (enabledServices.any { it.resolveInfo.serviceInfo.packageName == packageName }) {
+        if (enabledServices.any { serviceInfo ->
+                val enabledComponent = ComponentName(
+                    serviceInfo.resolveInfo.serviceInfo.packageName,
+                    serviceInfo.resolveInfo.serviceInfo.name
+                )
+                enabledComponent == expectedComponent
+            }
+        ) {
             return true
         }
 
@@ -198,7 +210,41 @@ class MainActivity : AppCompatActivity() {
             Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
         ) ?: return false
 
-        return enabledServicesSetting.contains("$packageName/")
+        return enabledServicesSetting
+            .split(':')
+            .any { ComponentName.unflattenFromString(it) == expectedComponent }
+    }
+
+    private suspend fun awaitAccessibilityServiceConnection(
+        timeoutMs: Long = ACCESSIBILITY_CONNECT_TIMEOUT_MS
+    ): PhoneAgentAccessibilityService? {
+        PhoneAgentAccessibilityService.getInstance()?.let { return it }
+        if (!isAccessibilityServiceEnabled()) {
+            return null
+        }
+
+        binding.tvStatus.text = "无障碍服务已授权，正在等待服务连接..."
+        return withTimeoutOrNull(timeoutMs) {
+            suspendCancellableCoroutine { continuation ->
+                lateinit var listener: (PhoneAgentAccessibilityService?) -> Unit
+                listener = { service ->
+                    if (service != null && continuation.isActive) {
+                        PhoneAgentAccessibilityService.removeConnectionListener(listener)
+                        android.util.Log.d("MainActivity", "✅ 无障碍服务已连接，继续启动任务")
+                        continuation.resume(service)
+                    }
+                }
+                PhoneAgentAccessibilityService.addConnectionListener(listener)
+                continuation.invokeOnCancellation {
+                    PhoneAgentAccessibilityService.removeConnectionListener(listener)
+                }
+                PhoneAgentAccessibilityService.getInstance()?.let(listener)
+            }
+        }.also { service ->
+            if (service == null) {
+                android.util.Log.w("MainActivity", "⚠️ 无障碍服务已授权但未连接")
+            }
+        }
     }
 
     private fun openAccessibilitySettings() {
@@ -421,6 +467,27 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun startTaskInternal() {
+        lifecycleScope.launch {
+            binding.btnStart.isEnabled = false
+            binding.tvStatus.text = "正在连接无障碍服务..."
+            val accessibilityService = awaitAccessibilityServiceConnection()
+            if (accessibilityService == null) {
+                val message = if (isAccessibilityServiceEnabled()) {
+                    "无障碍服务已授权但尚未连接，请稍等后重试；若仍失败，请在系统无障碍设置中关闭后重新开启"
+                } else {
+                    "无障碍服务未启用，请在系统设置中启用无障碍服务"
+                }
+                binding.tvStatus.text = message
+                binding.btnStart.isEnabled = true
+                Toast.makeText(this@MainActivity, message, Toast.LENGTH_LONG).show()
+                return@launch
+            }
+
+            startTaskInternal(accessibilityService)
+        }
+    }
+
+    private fun startTaskInternal(accessibilityService: PhoneAgentAccessibilityService) {
         val task = binding.etTask.text.toString().trim()
         if (task.isEmpty()) {
             return
@@ -428,12 +495,6 @@ class MainActivity : AppCompatActivity() {
         
         // 保存任务到SharedPreferences
         saveTaskToPrefs(task)
-
-        val accessibilityService = PhoneAgentAccessibilityService.getInstance()
-        if (accessibilityService == null) {
-            Toast.makeText(this, "无障碍服务未启动，请重启应用", Toast.LENGTH_LONG).show()
-            return
-        }
 
         // 获取选择的模式
         val selectedMode = getSelectedMode()
@@ -444,6 +505,7 @@ class MainActivity : AppCompatActivity() {
             if (mediaProjection == null) {
                 android.util.Log.w("MainActivity", "⚠️ MediaProjection 为 null，需要重新请求权限（模式: $selectedMode）")
                 Toast.makeText(this, "屏幕录制权限未授予，正在重新请求...", Toast.LENGTH_SHORT).show()
+                binding.btnStart.isEnabled = true
                 requestScreenCapturePermission()
                 return
             }
@@ -648,12 +710,28 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        val accessibilityService = PhoneAgentAccessibilityService.getInstance()
-        if (accessibilityService == null) {
-            Toast.makeText(this, "无障碍服务未启动，请重启应用", Toast.LENGTH_LONG).show()
-            return
-        }
+        lifecycleScope.launch {
+            val accessibilityService = awaitAccessibilityServiceConnection()
+            if (accessibilityService == null) {
+                val message = if (isAccessibilityServiceEnabled()) {
+                    "无障碍服务已授权但尚未连接，请稍等后重试；若仍失败，请在系统无障碍设置中关闭后重新开启"
+                } else {
+                    "无障碍服务未启用，请在系统设置中启用无障碍服务"
+                }
+                binding.tvStatus.text = message
+                Toast.makeText(this@MainActivity, message, Toast.LENGTH_LONG).show()
+                return@launch
+            }
 
+            startEvalSuiteInternal(evalRunner, cases, accessibilityService)
+        }
+    }
+
+    private fun startEvalSuiteInternal(
+        evalRunner: EvalRunner,
+        cases: List<EvalCase>,
+        accessibilityService: PhoneAgentAccessibilityService
+    ) {
         val displayMetrics = resources.displayMetrics
         val screenWidth = displayMetrics.widthPixels
         val screenHeight = displayMetrics.heightPixels
@@ -892,7 +970,8 @@ class MainActivity : AppCompatActivity() {
         // 获取当前日期
         val calendar = java.util.Calendar.getInstance()
         val weekdayNames = arrayOf("星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日")
-        val weekday = weekdayNames[calendar.get(java.util.Calendar.DAY_OF_WEEK) - 2]
+        val weekdayIndex = (calendar.get(java.util.Calendar.DAY_OF_WEEK) + 5) % 7
+        val weekday = weekdayNames[weekdayIndex]
         val formattedDate = "${calendar.get(java.util.Calendar.YEAR)}年${calendar.get(java.util.Calendar.MONTH) + 1}月${calendar.get(java.util.Calendar.DAY_OF_MONTH)}日 $weekday"
         
         // 获取当前选择的模式
