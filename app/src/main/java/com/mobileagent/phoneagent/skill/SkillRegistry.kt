@@ -2,6 +2,8 @@ package com.mobileagent.phoneagent.skill
 
 import android.content.Context
 import android.util.Log
+import com.mobileagent.phoneagent.harness.learn.LearnedSkill
+import com.mobileagent.phoneagent.harness.learn.LearnedSkillRepository
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -10,7 +12,7 @@ object SkillRegistry {
     private const val SKILL_ASSET = "app_skills.json"
 
     @Volatile
-    private var cachedSkills: List<AppSkill>? = null
+    private var cachedAssetSkills: List<AppSkill>? = null
 
     fun buildSkillGuidance(context: Context, currentApp: String?, task: String?): String? {
         val matches = matchingSkills(context, currentApp, task)
@@ -27,9 +29,13 @@ object SkillRegistry {
     }
 
     fun matchingSkills(context: Context, currentApp: String?, task: String?): List<AppSkill> {
+        return matchingSkills(loadSkills(context), currentApp, task)
+    }
+
+    internal fun matchingSkills(skills: List<AppSkill>, currentApp: String?, task: String?): List<AppSkill> {
         val appText = currentApp.orEmpty().lowercase()
         val taskText = task.orEmpty().lowercase()
-        return loadSkills(context).filter { skill ->
+        return skills.filter { skill ->
             skill.appKeywords.any { keyword ->
                 val normalized = keyword.lowercase()
                 appText.contains(normalized) || taskText.contains(normalized)
@@ -47,10 +53,17 @@ object SkillRegistry {
     }
 
     fun loadSkills(context: Context): List<AppSkill> {
-        cachedSkills?.let { return it }
+        return loadAssetSkills(context) + loadLearnedSkills(context)
+    }
 
+    fun invalidateCache() {
+        cachedAssetSkills = null
+    }
+
+    private fun loadAssetSkills(context: Context): List<AppSkill> {
+        cachedAssetSkills?.let { return it }
         synchronized(this) {
-            cachedSkills?.let { return it }
+            cachedAssetSkills?.let { return it }
             val loadedSkills = try {
                 val json = context.assets.open(SKILL_ASSET).bufferedReader().use { it.readText() }
                 parseSkills(JSONArray(json))
@@ -58,9 +71,48 @@ object SkillRegistry {
                 Log.e(TAG, "加载技能配置失败，使用空配置", e)
                 emptyList()
             }
-            cachedSkills = loadedSkills
+            cachedAssetSkills = loadedSkills
             return loadedSkills
         }
+    }
+
+    private fun loadLearnedSkills(context: Context): List<AppSkill> {
+        return LearnedSkillRepository(context)
+            .loadPromptEnabled()
+            .map { it.toAppSkill() }
+    }
+
+    internal fun LearnedSkill.toAppSkill(): AppSkill {
+        return AppSkill(
+            id = id,
+            displayName = displayName,
+            appKeywords = (appKeywords + packageNames + sourceTaskGoal)
+                .map { it.trim() }
+                .filter { it.isNotBlank() }
+                .distinct(),
+            launchAliases = emptyList(),
+            guidance = buildLearnedGuidance(),
+            recoveryGuidance = emptyMap(),
+            fallbackProfile = null
+        )
+    }
+
+    private fun LearnedSkill.buildLearnedGuidance(): String {
+        return buildString {
+            append("动态路径技能（草稿，来源 trace ${sourceTraceSessionId.take(8)}）：\n")
+            append("任务目标：$sourceTaskGoal\n")
+            append("路径摘要：$summary\n")
+            caution?.let {
+                append("注意：$it\n")
+            }
+            append("可复用步骤：\n")
+            steps.forEachIndexed { index, step ->
+                append("${index + 1}. ${step.actionSummary}")
+                append("；成功信号：${step.successSignal}")
+                append("；验证：${step.verificationReason}\n")
+            }
+            append("复用要求：先确认当前页面和目标任务匹配；页面不同或涉及敏感操作时重新规划，不要盲目照搬坐标。")
+        }.trim()
     }
 
     private fun parseSkills(array: JSONArray): List<AppSkill> {

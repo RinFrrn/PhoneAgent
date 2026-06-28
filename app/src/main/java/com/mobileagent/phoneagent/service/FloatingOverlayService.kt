@@ -319,11 +319,10 @@ class FloatingOverlayService : Service() {
 
     private fun showTapMarker(x: Float, y: Float, label: String) {
         removeTapMarker()
-        val sizePx = (resources.displayMetrics.density * 96).toInt().coerceAtLeast(96)
-        val marker = TapMarkerView(this, label)
+        val marker = TapMarkerView(this, x, y, label)
         val params = WindowManager.LayoutParams(
-            sizePx,
-            sizePx,
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
             } else {
@@ -335,8 +334,12 @@ class FloatingOverlayService : Service() {
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
-            this.x = (x - sizePx / 2f).toInt()
-            this.y = (y - sizePx / 2f).toInt()
+            this.x = 0
+            this.y = 0
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                layoutInDisplayCutoutMode =
+                    WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+            }
         }
         tapMarkerView = marker
         windowManager?.addView(marker, params)
@@ -361,9 +364,12 @@ class FloatingOverlayService : Service() {
 
     private class TapMarkerView(
         context: Context,
+        private val tapX: Float,
+        private val tapY: Float,
         private val label: String
     ) : View(context) {
         private val density = resources.displayMetrics.density
+        private val markerSizePx = (density * 96f).coerceAtLeast(96f)
         private val ringPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.argb(230, 255, 64, 64)
             style = Paint.Style.STROKE
@@ -382,9 +388,9 @@ class FloatingOverlayService : Service() {
 
         override fun onDraw(canvas: Canvas) {
             super.onDraw(canvas)
-            val cx = width / 2f
-            val cy = height / 2f
-            val radius = minOf(width, height) * 0.22f
+            val cx = tapX
+            val cy = tapY
+            val radius = markerSizePx * 0.22f
             canvas.drawCircle(cx, cy, radius * 1.8f, fillPaint)
             canvas.drawCircle(cx, cy, radius, ringPaint)
             canvas.drawLine(cx - radius * 1.6f, cy, cx + radius * 1.6f, cy, ringPaint)

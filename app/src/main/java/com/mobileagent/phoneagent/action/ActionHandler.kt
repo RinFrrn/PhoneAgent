@@ -13,6 +13,7 @@ package com.mobileagent.phoneagent.action
 
 import android.util.Log
 import com.mobileagent.phoneagent.service.FloatingOverlayService
+import com.mobileagent.phoneagent.service.GestureDisplayBounds
 import com.mobileagent.phoneagent.service.PhoneAgentAccessibilityService
 import com.mobileagent.phoneagent.utils.AppLauncher
 import kotlinx.coroutines.CompletableDeferred
@@ -39,12 +40,20 @@ class ActionHandler(
         Log.d(TAG, "========================================")
         Log.d(TAG, "🎯 开始执行操作")
         Log.d(TAG, "操作 JSON: $actionJson")
-        Log.d(TAG, "屏幕尺寸: ${screenWidth}x${screenHeight}")
+        val gestureBounds = accessibilityService.getGestureDisplayBounds()
+        Log.d(TAG, "请求屏幕尺寸: ${screenWidth}x${screenHeight}")
+        Log.d(TAG, "执行坐标基准: ${gestureBounds.width}x${gestureBounds.height} (${gestureBounds.source})")
+        if (screenWidth != gestureBounds.width || screenHeight != gestureBounds.height) {
+            Log.w(
+                TAG,
+                "⚠️ 请求屏幕尺寸与无障碍手势坐标基准不一致，使用手势坐标基准避免状态栏/导航栏偏移"
+            )
+        }
         
         return try {
             val action = actionParser.parse(actionJson)
             Log.d(TAG, "操作类型: ${action::class.simpleName}")
-            val result = executeAction(action, screenWidth, screenHeight)
+            val result = executeAction(action, gestureBounds)
             Log.d(TAG, "✅ 操作执行完成: success=${result.success}, finished=${result.shouldFinish}")
             Log.d(TAG, "========================================")
             result
@@ -65,18 +74,9 @@ class ActionHandler(
     private fun convertRelativeToAbsolute(
         relativeX: Int,
         relativeY: Int,
-        screenWidth: Int,
-        screenHeight: Int
+        gestureBounds: GestureDisplayBounds
     ): Pair<Int, Int> {
-        val safeWidth = screenWidth.coerceAtLeast(1)
-        val safeHeight = screenHeight.coerceAtLeast(1)
-        val normalizedX = relativeX.coerceIn(0, 1000)
-        val normalizedY = relativeY.coerceIn(0, 1000)
-
-        // 相对坐标范围是 0-1000，映射到有效像素范围 0..(size-1)
-        val absoluteX = ((normalizedX / 1000.0) * (safeWidth - 1)).toInt().coerceIn(0, safeWidth - 1)
-        val absoluteY = ((normalizedY / 1000.0) * (safeHeight - 1)).toInt().coerceIn(0, safeHeight - 1)
-        return Pair(absoluteX, absoluteY)
+        return gestureBounds.relativeToPixel(relativeX, relativeY)
     }
 
     private suspend fun <T> withStatusOverlaySuppressed(block: suspend () -> T): T {
@@ -93,8 +93,7 @@ class ActionHandler(
      */
     private suspend fun executeAction(
         action: Action,
-        screenWidth: Int,
-        screenHeight: Int
+        gestureBounds: GestureDisplayBounds
     ): ActionResult {
         return when (action) {
             is FinishAction -> {
@@ -109,8 +108,7 @@ class ActionHandler(
                 val (absoluteX, absoluteY) = convertRelativeToAbsolute(
                     action.x,
                     action.y,
-                    screenWidth,
-                    screenHeight
+                    gestureBounds
                 )
                 val x = absoluteX.toFloat()
                 val y = absoluteY.toFloat()
@@ -187,14 +185,12 @@ class ActionHandler(
                 val (startAbsX, startAbsY) = convertRelativeToAbsolute(
                     action.startX,
                     action.startY,
-                    screenWidth,
-                    screenHeight
+                    gestureBounds
                 )
                 val (endAbsX, endAbsY) = convertRelativeToAbsolute(
                     action.endX,
                     action.endY,
-                    screenWidth,
-                    screenHeight
+                    gestureBounds
                 )
                 val startX = startAbsX.toFloat()
                 val startY = startAbsY.toFloat()
@@ -240,8 +236,7 @@ class ActionHandler(
                 val (absoluteX, absoluteY) = convertRelativeToAbsolute(
                     action.x,
                     action.y,
-                    screenWidth,
-                    screenHeight
+                    gestureBounds
                 )
                 val x = absoluteX.toFloat()
                 val y = absoluteY.toFloat()
@@ -277,8 +272,7 @@ class ActionHandler(
                 val (absoluteX, absoluteY) = convertRelativeToAbsolute(
                     action.x,
                     action.y,
-                    screenWidth,
-                    screenHeight
+                    gestureBounds
                 )
                 val x = absoluteX.toFloat()
                 val y = absoluteY.toFloat()

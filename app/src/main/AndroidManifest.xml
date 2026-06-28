@@ -78,6 +78,13 @@
             android:theme="@style/Theme.PhoneAgent" />
 
         <activity
+            android:name=".LearnedSkillsActivity"
+            android:exported="false"
+            android:label="动态路径技能"
+            android:parentActivityName=".MainActivity"
+            android:theme="@style/Theme.PhoneAgent" />
+
+        <activity
             android:name=".LaunchProxyActivity"
             android:excludeFromRecents="true"
             android:exported="false"

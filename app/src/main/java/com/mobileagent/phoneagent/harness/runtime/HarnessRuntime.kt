@@ -12,6 +12,8 @@ import com.mobileagent.phoneagent.agent.TaskOutcome
 import com.mobileagent.phoneagent.harness.act.ActionExecutor
 import com.mobileagent.phoneagent.harness.act.ExecutionRequest
 import com.mobileagent.phoneagent.harness.act.ExecutionResult
+import com.mobileagent.phoneagent.harness.learn.LearnedSkillRepository
+import com.mobileagent.phoneagent.harness.learn.TracePathSummarizer
 import com.mobileagent.phoneagent.harness.observe.Observation
 import com.mobileagent.phoneagent.harness.observe.ObservationCollector
 import com.mobileagent.phoneagent.harness.plan.Planner
@@ -25,6 +27,7 @@ import com.mobileagent.phoneagent.harness.trace.TraceStore
 import com.mobileagent.phoneagent.harness.verify.StepVerifier
 import com.mobileagent.phoneagent.harness.verify.VerificationResult
 import com.mobileagent.phoneagent.model.Message
+import com.mobileagent.phoneagent.skill.SkillRegistry
 import com.mobileagent.phoneagent.skill.SkillExecutionAdvisor
 import kotlinx.coroutines.delay
 
@@ -48,6 +51,8 @@ class HarnessRuntime(
     private val recoveryPolicy: DefaultRecoveryPolicy
 ) {
     private val tag = "HarnessRuntime"
+    private val learnedSkillRepository = LearnedSkillRepository(context)
+    private val tracePathSummarizer = TracePathSummarizer()
 
     suspend fun run(
         taskSpec: TaskSpec,
@@ -279,6 +284,7 @@ class HarnessRuntime(
                         status = TaskHistoryStatus.SUCCEEDED,
                         outcomeMessage = message
                     )
+                    learnFromSuccessfulTrace(traceSessionId)
                     onComplete(TaskOutcome(true, message, traceSessionId))
                     return
                 }
@@ -388,6 +394,20 @@ class HarnessRuntime(
         decision.userMessage?.let { sessionMemory.add(Message("user", it)) }
         if (decision.stopTask) {
             stateMachine.markFailed()
+        }
+    }
+
+    private fun learnFromSuccessfulTrace(traceSessionId: String) {
+        runCatching {
+            val session = traceStore.loadSession(traceSessionId) ?: return
+            val skill = tracePathSummarizer.summarize(session) ?: return
+            val saved = learnedSkillRepository.saveFromTrace(skill)
+            if (saved) {
+                SkillRegistry.invalidateCache()
+                Log.d(tag, "已生成动态路径技能: ${skill.id}")
+            }
+        }.onFailure { error ->
+            Log.w(tag, "生成动态路径技能失败", error)
         }
     }
 }

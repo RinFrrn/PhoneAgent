@@ -31,6 +31,7 @@ interface TraceStore {
     )
 
     fun loadRecentHistory(limit: Int = 5): List<TaskHistoryEntry>
+    fun loadSession(sessionId: String): SessionTrace?
 }
 
 class FileTraceStore(
@@ -140,6 +141,16 @@ class FileTraceStore(
             .take(limit)
     }
 
+    override fun loadSession(sessionId: String): SessionTrace? {
+        return runCatching {
+            findSessionFile(sessionId)?.let { file ->
+                gson.fromJson(file.readText(), SessionTrace::class.java)
+            }
+        }.onFailure { error ->
+            logError("读取 Session Trace 失败", error)
+        }.getOrNull()
+    }
+
     private fun writeSnapshot(snapshot: SessionTrace) {
         runCatching {
             val dateDir = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date(snapshot.startedAt))
@@ -180,6 +191,15 @@ class FileTraceStore(
         }.onFailure { error ->
             logError("读取任务历史失败", error)
         }.getOrDefault(emptyList())
+    }
+
+    private fun findSessionFile(sessionId: String): File? {
+        val root = File(filesDir, "harness-traces")
+        if (!root.exists()) {
+            return null
+        }
+        return root.walkTopDown()
+            .firstOrNull { it.isFile && it.name == "session-$sessionId.json" }
     }
 
     private fun logDebug(message: String) {

@@ -120,6 +120,10 @@ class MainActivity : AppCompatActivity() {
             startActivity(Intent(this, TestToolsActivity::class.java))
         }
 
+        binding.btnOpenLearnedSkills.setOnClickListener {
+            startActivity(Intent(this, LearnedSkillsActivity::class.java))
+        }
+
         binding.btnOpenSettings.setOnClickListener {
             val intent = Intent(this, SettingsActivity::class.java)
             startActivity(intent)
@@ -1136,8 +1140,10 @@ class MainActivity : AppCompatActivity() {
     private fun getSystemPrompt(): String {
         // 获取屏幕尺寸用于提示词
         val displayMetrics = resources.displayMetrics
-        val screenWidth = displayMetrics.widthPixels
-        val screenHeight = displayMetrics.heightPixels
+        val gestureBounds = PhoneAgentAccessibilityService.getInstance()?.getGestureDisplayBounds()
+        val screenWidth = gestureBounds?.width ?: displayMetrics.widthPixels
+        val screenHeight = gestureBounds?.height ?: displayMetrics.heightPixels
+        val coordinateSource = gestureBounds?.source ?: "displayMetrics"
         
         // 获取当前日期
         val calendar = java.util.Calendar.getInstance()
@@ -1157,12 +1163,12 @@ class MainActivity : AppCompatActivity() {
         val selectedMode = getSelectedMode()
         val modeDescription = when (selectedMode) {
             Mode.VISION -> "视觉模式：你将收到屏幕截图，通过分析图片内容来理解屏幕状态。"
-            Mode.ACCESSIBILITY -> "无障碍模式：你将收到屏幕的结构化文本内容（包括所有可见文本、按钮、输入框等控件信息及其坐标），通过分析这些文本和控件信息来理解屏幕状态。注意：坐标是相对坐标（0-1000），可以直接使用。"
-            Mode.HYBRID -> "混合模式：你将同时收到屏幕截图和结构化文本内容，结合两种信息来理解屏幕状态。"
+            Mode.ACCESSIBILITY -> "无障碍模式：你将收到屏幕的结构化文本内容（包括所有可见文本、按钮、输入框等控件信息及其坐标），通过分析这些文本和控件信息来理解屏幕状态。注意：坐标是相对坐标（0-1000），可以直接使用；状态栏高度已经包含在坐标基准中，不要额外下移或补偿。"
+            Mode.HYBRID -> "混合模式：你将同时收到屏幕截图和结构化文本内容，结合两种信息来理解屏幕状态。结构化坐标可以直接点击，状态栏高度已经包含在坐标基准中，不要额外下移或补偿。"
         }
         
         return """
-            日期: $formattedDate | 屏幕: ${screenWidth}x${screenHeight} | 坐标: 0-1000(相对)
+            日期: $formattedDate | 屏幕: ${screenWidth}x${screenHeight}($coordinateSource) | 坐标: 0-1000(相对，完整屏幕左上角为0,0，状态栏已包含)
             
             运行模式: $modeDescription
             

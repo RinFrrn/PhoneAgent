@@ -39,6 +39,16 @@ data class GestureDisplayBounds(
     val height: Int,
     val source: String
 ) {
+    fun relativeToPixel(relativeX: Int, relativeY: Int): Pair<Int, Int> {
+        val safeWidth = width.coerceAtLeast(1)
+        val safeHeight = height.coerceAtLeast(1)
+        val normalizedX = relativeX.coerceIn(0, 1000)
+        val normalizedY = relativeY.coerceIn(0, 1000)
+        val x = ((normalizedX / 1000.0) * (safeWidth - 1)).toInt().coerceIn(0, safeWidth - 1)
+        val y = ((normalizedY / 1000.0) * (safeHeight - 1)).toInt().coerceIn(0, safeHeight - 1)
+        return Pair(x, y)
+    }
+
     fun centerToRelative(bounds: Rect): Pair<Int, Int> {
         val centerX = (bounds.left + bounds.right) / 2.0
         val centerY = (bounds.top + bounds.bottom) / 2.0
@@ -158,9 +168,7 @@ class PhoneAgentAccessibilityService : AccessibilityService() {
 
     /**
      * 点击指定坐标
-     * 重要：坐标系统必须与截图坐标系统完全一致
-     * MediaProjection 截图使用的是 displayMetrics 的尺寸（不包括导航栏，但包括状态栏）
-     * 坐标 (0,0) 对应屏幕左上角（状态栏下方）
+     * 坐标使用完整屏幕坐标系，(0,0) 对应物理屏幕左上角，状态栏区域已包含在内。
      */
     @RequiresApi(Build.VERSION_CODES.N)
     fun tap(x: Float, y: Float, callback: (Boolean) -> Unit) {
@@ -817,7 +825,7 @@ class PhoneAgentAccessibilityService : AccessibilityService() {
             val packageName = getCurrentPackageName() ?: "未知"
             content.append("当前应用: $currentApp ($packageName)\n\n")
             val gestureBounds = getGestureDisplayBounds()
-            content.append("坐标基准: ${gestureBounds.width}x${gestureBounds.height} (${gestureBounds.source})，坐标范围 0-1000\n\n")
+            content.append("坐标基准: ${gestureBounds.width}x${gestureBounds.height} (${gestureBounds.source})，坐标范围 0-1000，完整屏幕左上角为 [0,0]，状态栏已包含，不要额外下移\n\n")
             
             // 递归遍历所有节点，提取文本和控件信息
             fun traverseNode(node: AccessibilityNodeInfo?, depth: Int = 0) {
