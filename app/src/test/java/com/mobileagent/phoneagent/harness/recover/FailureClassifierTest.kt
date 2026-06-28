@@ -40,6 +40,23 @@ class FailureClassifierTest {
         assertEquals(FailureType.APP_LAUNCH_TARGET_NOT_REACHED, failureType)
     }
 
+    @Test
+    fun classifySuccessfulExecutionWithFailedVerificationAsActionNotEffective() {
+        val execution = ExecutionResult(
+            success = true,
+            shouldFinish = false,
+            message = "点击成功",
+            actionJson = """{"_metadata":"do","action":"Tap","element":[500,500]}"""
+        )
+
+        val failureType = classifier.classifyExecutionFailure(
+            execution = execution,
+            verification = VerificationResult(false, 0.85f, "点击手势已调度，但页面内容和当前应用均未变化")
+        )
+
+        assertEquals(FailureType.ACTION_NOT_EFFECTIVE, failureType)
+    }
+
     private fun launchExecution(status: AppLaunchStatus, afterPackage: String): ExecutionResult {
         return ExecutionResult(
             success = false,

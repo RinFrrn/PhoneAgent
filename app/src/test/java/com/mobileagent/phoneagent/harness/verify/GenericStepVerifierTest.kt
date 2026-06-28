@@ -16,6 +16,8 @@ class GenericStepVerifierTest {
     private val taskSpec = TaskSpec(id = "test", goal = "打开微信", mode = "ACCESSIBILITY")
     private val launchAction = """{"_metadata":"do","action":"Launch","app":"微信"}"""
     private val tapAction = """{"_metadata":"do","action":"Tap","element":[500,500]}"""
+    private val swipeAction = """{"_metadata":"do","action":"Swipe","start":[500,800],"end":[500,200]}"""
+    private val backAction = """{"_metadata":"do","action":"Back"}"""
 
     @Test
     fun launchPassesWhenObservedPackageMatchesTarget() {
@@ -65,6 +67,54 @@ class GenericStepVerifierTest {
 
         assertFalse(result.passed)
         assertTrue(result.reason.contains("页面内容和当前应用均未变化"))
+    }
+
+    @Test
+    fun swipeFailsWhenPageDoesNotChangeAfterGestureDispatch() {
+        val unchanged = Observation(
+            currentApp = "微信",
+            currentPackage = "com.tencent.mm",
+            contentItems = listOf(ContentItem(type = "text", text = "通讯录 发现 搜索 服务"))
+        )
+
+        val result = verifier.verify(
+            before = unchanged,
+            execution = ExecutionResult(
+                success = true,
+                shouldFinish = false,
+                message = "滑动成功",
+                actionJson = swipeAction
+            ),
+            after = unchanged.copy(timestamp = unchanged.timestamp + 1),
+            taskSpec = taskSpec
+        )
+
+        assertFalse(result.passed)
+        assertTrue(result.reason.contains("滑动后页面内容未变化"))
+    }
+
+    @Test
+    fun backFailsWhenPageDoesNotChangeAfterGestureDispatch() {
+        val unchanged = Observation(
+            currentApp = "微信",
+            currentPackage = "com.tencent.mm",
+            contentItems = listOf(ContentItem(type = "text", text = "通讯录 发现 搜索 服务"))
+        )
+
+        val result = verifier.verify(
+            before = unchanged,
+            execution = ExecutionResult(
+                success = true,
+                shouldFinish = false,
+                message = "返回成功",
+                actionJson = backAction
+            ),
+            after = unchanged.copy(timestamp = unchanged.timestamp + 1),
+            taskSpec = taskSpec
+        )
+
+        assertFalse(result.passed)
+        assertTrue(result.reason.contains("返回动作 后页面内容未明显变化"))
     }
 
     private fun launchExecution(targetPackage: String): ExecutionResult {

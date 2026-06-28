@@ -46,9 +46,9 @@ class FailureClassifier {
             "应用启动需要确认" in rawMessage || "需要点击悬浮窗或通知" in rawMessage -> FailureType.APP_LAUNCH_CONFIRMATION_REQUIRED
             "未到达目标包名" in rawMessage -> FailureType.APP_LAUNCH_TARGET_NOT_REACHED
             "无障碍服务未启用" in rawMessage -> FailureType.PERMISSION_MISSING
+            execution.success && verification != null && !verification.passed -> FailureType.ACTION_NOT_EFFECTIVE
             verification != null && !verification.passed -> FailureType.VERIFICATION_FAILED
             !execution.success && "失败" in normalized -> FailureType.ACTION_EXECUTION_FAILED
-            execution.success && verification != null && !verification.passed -> FailureType.ACTION_NOT_EFFECTIVE
             else -> FailureType.UNKNOWN
         }
     }

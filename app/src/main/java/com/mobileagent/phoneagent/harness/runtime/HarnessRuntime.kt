@@ -54,6 +54,11 @@ class HarnessRuntime(
     private val learnedSkillRepository = LearnedSkillRepository(context)
     private val tracePathSummarizer = TracePathSummarizer()
 
+    companion object {
+        private const val REPLAN_AFTER_INEFFECTIVE = 2
+        private const val TAKEOVER_AFTER_INEFFECTIVE = 3
+    }
+
     suspend fun run(
         taskSpec: TaskSpec,
         screenWidth: Int,
@@ -204,32 +209,56 @@ class HarnessRuntime(
                     after = afterObservation,
                     taskSpec = taskSpec
                 )
+                val stagnation = session.recordStepOutcome(
+                    actionJson = decision.actionJson,
+                    before = observation,
+                    after = afterObservation,
+                    verification = verification
+                )
+                val baseFailureType = execution.failureType
+                    ?: failureClassifier.classifyExecutionFailure(execution, verification)
+                val effectiveFailureType = if (stagnation.ineffective) {
+                    FailureType.ACTION_NOT_EFFECTIVE
+                } else {
+                    baseFailureType
+                }
+                val stagnationTakeover = stagnation.ineffective &&
+                    stagnation.consecutiveIneffectiveActions >= TAKEOVER_AFTER_INEFFECTIVE
+                val effectiveMessage = buildResultMessage(
+                    execution = execution,
+                    verification = verification,
+                    stagnation = stagnation
+                )
+                val effectiveExecution = execution.copy(
+                    success = execution.success && verification.passed,
+                    message = effectiveMessage,
+                    requiresTakeover = execution.requiresTakeover || stagnationTakeover,
+                    failureType = effectiveFailureType
+                )
 
                 failureTracker.recordActionResult(
                     decision.actionJson,
                     ActionResult(
-                        success = execution.success && verification.passed,
+                        success = effectiveExecution.success,
                         shouldFinish = execution.shouldFinish,
-                        message = buildResultMessage(execution, verification),
-                        requiresTakeover = execution.requiresTakeover
-                    )
+                        message = effectiveMessage,
+                        requiresTakeover = effectiveExecution.requiresTakeover
+                    ),
+                    ineffective = stagnation.ineffective
                 )
-
-                if (execution.requiresTakeover && execution.message != null) {
-                    stateMachine.markWaitingForUser()
-                    onUserIntervention?.invoke(execution.message)
-                    sessionMemory.addInterventionMessage(execution.message)
-                    AgentSessionCoordinator.waitForUserConfirmation(timeoutMs = 180_000)
-                    stateMachine.resumeAfterUserIntervention()
-                }
 
                 sessionMemory.removeImageFromLastUserMessage()
                 sessionMemory.addAssistantResponse(decision.rawResponse)
-                val effectiveExecution = execution.copy(
-                    success = execution.success && verification.passed,
-                    message = buildResultMessage(execution, verification),
-                    failureType = execution.failureType ?: failureClassifier.classifyExecutionFailure(execution, verification)
-                )
+                if (stagnation.ineffective &&
+                    stagnation.consecutiveIneffectiveActions >= REPLAN_AFTER_INEFFECTIVE
+                ) {
+                    sessionMemory.add(
+                        Message(
+                            "user",
+                            buildStagnationReplanMessage(taskSpec, stagnation)
+                        )
+                    )
+                }
                 addFailureRecoveryHints(
                     observation = observation,
                     taskSpec = taskSpec,
@@ -237,6 +266,14 @@ class HarnessRuntime(
                     execution = effectiveExecution
                 )
                 applyRecoveryDecision(taskSpec, observation, effectiveExecution)
+
+                if (effectiveExecution.requiresTakeover && effectiveExecution.message != null) {
+                    stateMachine.markWaitingForUser()
+                    onUserIntervention?.invoke(effectiveExecution.message)
+                    sessionMemory.addInterventionMessage(effectiveExecution.message)
+                    AgentSessionCoordinator.waitForUserConfirmation(timeoutMs = 180_000)
+                    stateMachine.resumeAfterUserIntervention()
+                }
 
                 val status = when {
                     execution.shouldFinish -> StepStatus.FINISHED
@@ -342,14 +379,47 @@ class HarnessRuntime(
 
     private fun buildResultMessage(
         execution: ExecutionResult,
-        verification: VerificationResult
+        verification: VerificationResult,
+        stagnation: StagnationResult? = null
     ): String {
         val baseMessage = execution.message ?: "动作执行完成"
-        return if (verification.passed) {
+        val verificationMessage = if (verification.passed) {
             "$baseMessage | 验证通过: ${verification.reason}"
         } else {
             "$baseMessage | 验证失败: ${verification.reason}"
         }
+        if (stagnation == null || !stagnation.ineffective) {
+            return verificationMessage
+        }
+
+        return "$verificationMessage | 停滞检测: 页面指纹未变化, " +
+            "重复动作=${stagnation.repeatAction}, " +
+            "连续无效次数=${stagnation.consecutiveIneffectiveActions}, " +
+            "动作=${stagnation.actionFingerprint}"
+    }
+
+    private fun buildStagnationReplanMessage(
+        taskSpec: TaskSpec,
+        stagnation: StagnationResult
+    ): String {
+        val takeoverHint = if (stagnation.consecutiveIneffectiveActions >= TAKEOVER_AFTER_INEFFECTIVE) {
+            "\n\n已经连续无效 ${stagnation.consecutiveIneffectiveActions} 次，请使用 Take_over 请求用户接管，或明确说明无法自动继续。"
+        } else {
+            ""
+        }
+        return "** ⚠️ 页面停滞：必须换策略 **\n\n" +
+            "任务目标: ${taskSpec.goal}\n" +
+            "刚才的动作已经执行，但页面指纹没有变化。\n" +
+            "无效动作: ${stagnation.actionFingerprint}\n" +
+            "连续无效次数: ${stagnation.consecutiveIneffectiveActions}\n\n" +
+            "禁止继续重复同一动作、同一坐标或同一路径。请立即换一种策略：\n" +
+            "1. 换一个更明确的控件坐标或点击文本/按钮中心\n" +
+            "2. 先滑动查找更多内容\n" +
+            "3. 返回上一页后重新进入\n" +
+            "4. 等待页面加载后重新观察\n" +
+            "5. 使用 Launch 回到目标应用入口\n" +
+            "6. 如果需要验证码、登录、确认或页面无法自动处理，请使用 Take_over\n" +
+            takeoverHint
     }
 
     private fun addFailureRecoveryHints(

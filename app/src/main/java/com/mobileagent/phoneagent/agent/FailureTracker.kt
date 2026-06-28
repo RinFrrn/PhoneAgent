@@ -10,26 +10,44 @@ class FailureTracker {
     var consecutiveFailures: Int = 0
         private set
 
+    var consecutiveIneffectiveActions: Int = 0
+        private set
+
     var lastFailedAction: String? = null
         private set
 
+    private var lastReplanPromptFailureCount = 0
+    private var lastInterventionPromptFailureCount = 0
+
     fun reset() {
         consecutiveFailures = 0
+        consecutiveIneffectiveActions = 0
         lastFailedAction = null
+        lastReplanPromptFailureCount = 0
+        lastInterventionPromptFailureCount = 0
     }
 
-    fun recordActionResult(actionJson: String, actionResult: ActionResult) {
+    fun recordActionResult(
+        actionJson: String,
+        actionResult: ActionResult,
+        ineffective: Boolean = false
+    ) {
         if (!actionResult.success) {
             consecutiveFailures++
+            if (ineffective) {
+                consecutiveIneffectiveActions++
+            } else {
+                consecutiveIneffectiveActions = 0
+            }
             lastFailedAction = actionJson
-            Log.w(tag, "操作失败，连续失败次数: $consecutiveFailures")
+            logWarning("操作失败，连续失败次数: $consecutiveFailures, 连续无效动作: $consecutiveIneffectiveActions")
         } else {
             reset()
         }
     }
 
     fun consumeReplanPrompt(task: String?): Message? {
-        if (consecutiveFailures < 2) {
+        if (consecutiveFailures < 2 || lastReplanPromptFailureCount == consecutiveFailures) {
             return null
         }
 
@@ -48,15 +66,16 @@ class FailureTracker {
                 "请立即重新分析屏幕，制定新的操作计划，并继续执行。"
         )
 
-        consecutiveFailures = 0
+        lastReplanPromptFailureCount = consecutiveFailures
         return prompt
     }
 
     fun maybeUserInterventionPrompt(): Message? {
-        if (consecutiveFailures < 5) {
+        if (consecutiveFailures < 5 || lastInterventionPromptFailureCount == consecutiveFailures) {
             return null
         }
 
+        lastInterventionPromptFailureCount = consecutiveFailures
         return Message(
             "user",
             "** ⚠️ 需要用户介入 **\n\n" +
@@ -74,5 +93,11 @@ class FailureTracker {
             return lastFailedAction
         }
         return null
+    }
+
+    private fun logWarning(message: String) {
+        runCatching {
+            Log.w(tag, message)
+        }
     }
 }

@@ -43,7 +43,16 @@ class DefaultRecoveryPolicy {
             FailureType.APP_LAUNCH_TARGET_NOT_REACHED -> RecoveryDecision(
                 userMessage = "已发送应用跳转请求，但未到达目标应用。请结合当前页面重新判断，不要重复后台启动。"
             )
-            FailureType.VERIFICATION_FAILED, FailureType.ACTION_NOT_EFFECTIVE -> RecoveryDecision(
+            FailureType.ACTION_NOT_EFFECTIVE -> RecoveryDecision(
+                userMessage = buildString {
+                    append("上一步动作已执行，但页面没有产生可观察变化，疑似点击/滑动无效。")
+                    observation.currentApp?.let { append(" 当前应用: $it。") }
+                    execution?.message?.let { append(" 细节: $it。") }
+                    append("禁止继续重复同一动作、同一坐标或同一路径。")
+                    append("请改用不同策略：换一个更明确的控件坐标、先滑动查找、返回后重新进入、等待页面加载、使用 Launch 回到目标应用，或使用 Take_over 请求用户接管。")
+                }
+            )
+            FailureType.VERIFICATION_FAILED -> RecoveryDecision(
                 userMessage = buildString {
                     append("上一步操作未产生预期效果。")
                     observation.currentApp?.let { append(" 当前应用: $it。") }
