@@ -158,10 +158,6 @@ class MainActivity : AppCompatActivity() {
             startActivity(intent)
         }
 
-        binding.btnVoiceInput.setOnClickListener {
-            startVoiceInput()
-        }
-
         binding.btnRefreshExampleTasks.setOnClickListener {
             refreshExampleTasks()
         }
@@ -324,6 +320,8 @@ class MainActivity : AppCompatActivity() {
 
         binding.btnStart.isEnabled = !running
         binding.btnStop.isEnabled = running
+        binding.btnStart.visibility = if (running) View.GONE else View.VISIBLE
+        binding.btnStop.visibility = if (running) View.VISIBLE else View.GONE
         binding.btnRunEval.isEnabled = !running
 
         val showAdvanced = isAdvancedExpanded || running
