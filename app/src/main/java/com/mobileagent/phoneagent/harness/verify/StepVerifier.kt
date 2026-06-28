@@ -62,11 +62,19 @@ class GenericStepVerifier(
 
         val action = runCatching { actionParser.parse(execution.actionJson) }.getOrNull()
         if (action == null) {
-            return VerificationResult(
-                passed = true,
-                confidence = 0.3f,
-                reason = "无法解析动作类型，跳过验证"
-            )
+            return when (fallbackActionType(execution.actionJson)) {
+                "Tap", "Click" -> verifyTap(before, after)
+                "Swipe" -> verifyScrollableChange(before, after)
+                "Type", "Type_Name" -> verifyType(before, after)
+                "Launch" -> verifyLaunch(before, execution, after)
+                "Back" -> verifyNavigationChange(before, after, "返回动作")
+                "Home" -> verifyNavigationChange(before, after, "主页动作")
+                else -> VerificationResult(
+                    passed = true,
+                    confidence = 0.3f,
+                    reason = "无法解析动作类型，跳过验证"
+                )
+            }
         }
 
         return when (action) {
@@ -143,8 +151,13 @@ class GenericStepVerifier(
     }
 
     private fun verifyTap(before: Observation, after: Observation): VerificationResult {
-        if (before.currentApp != after.currentApp) {
-            return VerificationResult(true, 0.9f, "点击后应用发生变化", "${before.currentApp} -> ${after.currentApp}")
+        if (before.currentPackage != after.currentPackage || before.currentApp != after.currentApp) {
+            return VerificationResult(
+                true,
+                0.9f,
+                "点击后应用发生变化",
+                "${before.currentPackage ?: before.currentApp} -> ${after.currentPackage ?: after.currentApp}"
+            )
         }
 
         val beforeText = before.textDigest()
@@ -152,7 +165,7 @@ class GenericStepVerifier(
         return if (beforeText != afterText) {
             VerificationResult(true, 0.75f, "点击后页面内容变化", summarizeDiff(beforeText, afterText))
         } else {
-            VerificationResult(false, 0.6f, "点击后页面内容未变化")
+            VerificationResult(false, 0.85f, "点击手势已调度，但页面内容和当前应用均未变化")
         }
     }
 
@@ -187,6 +200,13 @@ class GenericStepVerifier(
             .joinToString("\n")
             .replace("\\s+".toRegex(), " ")
             .trim()
+    }
+
+    private fun fallbackActionType(actionJson: String): String? {
+        return """"action"\s*:\s*"([^"]+)"""".toRegex()
+            .find(actionJson)
+            ?.groupValues
+            ?.getOrNull(1)
     }
 
     private fun summarizeDiff(before: String, after: String): String {

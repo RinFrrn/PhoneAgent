@@ -13,7 +13,8 @@ import com.mobileagent.phoneagent.skill.SkillRegistry
 class AppAwareStepVerifier(
     private val context: Context,
     private val genericVerifier: StepVerifier = GenericStepVerifier(),
-    private val actionParser: ActionParser = ActionParser()
+    private val actionParser: ActionParser = ActionParser(),
+    private val parsedActionProvider: ((String) -> Any?)? = null
 ) : StepVerifier {
     override fun verify(
         before: Observation,
@@ -30,7 +31,9 @@ class AppAwareStepVerifier(
             after?.currentApp ?: before.currentApp,
             taskSpec.goal
         ).firstOrNull() ?: return base
-        val action = runCatching { actionParser.parse(execution.actionJson) }.getOrNull() ?: return base
+        val action = parsedActionProvider?.invoke(execution.actionJson)
+            ?: runCatching { actionParser.parse(execution.actionJson) }.getOrNull()
+            ?: return base
         val afterText = after.textDigest()
 
         return when (matchedSkill.id) {
@@ -55,11 +58,8 @@ class AppAwareStepVerifier(
             } else {
                 base
             }
-            is BackAction, is TapAction -> if (
-                containsAny(afterText, listOf("通讯录", "发现", "聊天信息", "搜索", "服务")) ||
-                before.textDigest() != afterText
-            ) {
-                VerificationResult(true, 0.82f, "微信页面进入有效状态", afterText.take(100))
+            is BackAction, is TapAction -> if (hasMeaningfulChange(before, after)) {
+                VerificationResult(true, 0.82f, "微信页面发生变化，进入有效状态", afterText.take(100))
             } else {
                 base
             }
@@ -81,11 +81,8 @@ class AppAwareStepVerifier(
             } else {
                 base
             }
-            is TapAction -> if (
-                containsAny(afterText, listOf("加入购物车", "立即购买", "商品规格", "购物车", "提交订单", "选择规格", "配送地址")) ||
-                before.textDigest() != afterText
-            ) {
-                VerificationResult(true, 0.84f, "商业页面进入有效状态", afterText.take(100))
+            is TapAction -> if (hasMeaningfulChange(before, after)) {
+                VerificationResult(true, 0.84f, "商业页面发生变化，进入有效状态", afterText.take(100))
             } else {
                 base
             }
@@ -107,11 +104,8 @@ class AppAwareStepVerifier(
             } else {
                 base
             }
-            is TapAction, is BackAction -> if (
-                containsAny(afterText, listOf("推荐", "关注", "搜索", "评论", "直播", "笔记", "商品")) ||
-                before.textDigest() != afterText
-            ) {
-                VerificationResult(true, 0.8f, "内容应用页面进入有效状态", afterText.take(100))
+            is TapAction, is BackAction -> if (hasMeaningfulChange(before, after)) {
+                VerificationResult(true, 0.8f, "内容应用页面发生变化，进入有效状态", afterText.take(100))
             } else {
                 base
             }
@@ -127,6 +121,12 @@ class AppAwareStepVerifier(
             .joinToString("\n")
             .replace("\\s+".toRegex(), " ")
             .trim()
+    }
+
+    private fun hasMeaningfulChange(before: Observation, after: Observation): Boolean {
+        return before.currentPackage != after.currentPackage ||
+            before.currentApp != after.currentApp ||
+            before.textDigest() != after.textDigest()
     }
 
     private fun containsAny(text: String, tokens: List<String>): Boolean {
