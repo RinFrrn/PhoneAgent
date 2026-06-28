@@ -20,7 +20,6 @@ import android.view.WindowManager
 import android.widget.Button
 import android.widget.TextView
 import com.mobileagent.phoneagent.LaunchProxyActivity
-import com.mobileagent.phoneagent.MainActivity
 import com.mobileagent.phoneagent.R
 import com.mobileagent.phoneagent.agent.AgentSessionCoordinator
 
@@ -272,21 +271,9 @@ class FloatingOverlayService : Service() {
             }
         }
 
-        view.findViewById<Button>(R.id.btnOverlayOpen).setOnClickListener {
-            val openIntent = Intent(this, MainActivity::class.java).apply {
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-            }
-            startActivity(openIntent)
-        }
-
         view.findViewById<Button>(R.id.btnOverlayStop).setOnClickListener {
             AgentSessionCoordinator.stopCurrentTask()
             hide(this)
-
-            val openIntent = Intent(this, MainActivity::class.java).apply {
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-            }
-            startActivity(openIntent)
         }
 
         overlayView = view

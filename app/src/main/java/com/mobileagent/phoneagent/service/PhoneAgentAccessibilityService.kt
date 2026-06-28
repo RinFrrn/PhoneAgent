@@ -19,8 +19,10 @@ import android.app.ActivityManager
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.graphics.Path
+import android.graphics.Rect
 import android.os.Build
 import android.util.Log
+import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.annotation.RequiresApi
@@ -30,6 +32,27 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import java.util.concurrent.CopyOnWriteArraySet
+import kotlin.math.roundToInt
+
+data class GestureDisplayBounds(
+    val width: Int,
+    val height: Int,
+    val source: String
+) {
+    fun centerToRelative(bounds: Rect): Pair<Int, Int> {
+        val centerX = (bounds.left + bounds.right) / 2.0
+        val centerY = (bounds.top + bounds.bottom) / 2.0
+        return Pair(pixelToRelativeX(centerX), pixelToRelativeY(centerY))
+    }
+
+    private fun pixelToRelativeX(pixel: Double): Int {
+        return (pixel / width.coerceAtLeast(1) * 1000).roundToInt().coerceIn(0, 1000)
+    }
+
+    private fun pixelToRelativeY(pixel: Double): Int {
+        return (pixel / height.coerceAtLeast(1) * 1000).roundToInt().coerceIn(0, 1000)
+    }
+}
 
 /**
  * 无障碍服务 - 用于模拟用户操作
@@ -93,6 +116,46 @@ class PhoneAgentAccessibilityService : AccessibilityService() {
         Log.w(TAG, "无障碍服务被中断")
     }
 
+    fun getGestureDisplayBounds(): GestureDisplayBounds {
+        val windowBounds = runCatching {
+            val windowManager = getSystemService(WindowManager::class.java)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                val bounds = windowManager.maximumWindowMetrics.bounds
+                if (bounds.width() > 0 && bounds.height() > 0) {
+                    return@runCatching GestureDisplayBounds(
+                        width = bounds.width(),
+                        height = bounds.height(),
+                        source = "maximumWindowMetrics"
+                    )
+                }
+            } else {
+                @Suppress("DEPRECATION")
+                val display = windowManager.defaultDisplay
+                val metrics = android.util.DisplayMetrics()
+                @Suppress("DEPRECATION")
+                display.getRealMetrics(metrics)
+                if (metrics.widthPixels > 0 && metrics.heightPixels > 0) {
+                    return@runCatching GestureDisplayBounds(
+                        width = metrics.widthPixels,
+                        height = metrics.heightPixels,
+                        source = "realDisplayMetrics"
+                    )
+                }
+            }
+            null
+        }.getOrNull()
+        if (windowBounds != null) {
+            return windowBounds
+        }
+
+        val metrics = resources.displayMetrics
+        return GestureDisplayBounds(
+            width = metrics.widthPixels.coerceAtLeast(1),
+            height = metrics.heightPixels.coerceAtLeast(1),
+            source = "resourceDisplayMetrics"
+        )
+    }
+
     /**
      * 点击指定坐标
      * 重要：坐标系统必须与截图坐标系统完全一致
@@ -112,9 +175,9 @@ class PhoneAgentAccessibilityService : AccessibilityService() {
         
         // 获取显示区域尺寸（与截图使用的尺寸完全一致）
         // 这是 MediaProjection 截图使用的坐标系统
-        val displayMetrics = resources.displayMetrics
-        val screenshotWidth = displayMetrics.widthPixels.toFloat()
-        val screenshotHeight = displayMetrics.heightPixels.toFloat()
+        val gestureBounds = getGestureDisplayBounds()
+        val screenshotWidth = gestureBounds.width.toFloat()
+        val screenshotHeight = gestureBounds.height.toFloat()
         
         // 验证坐标是否在截图范围内
         if (x < 0 || x >= screenshotWidth || y < 0 || y >= screenshotHeight) {
@@ -129,7 +192,7 @@ class PhoneAgentAccessibilityService : AccessibilityService() {
         val finalY = y
         
         Log.d(TAG, "坐标系统信息:")
-        Log.d(TAG, "  - 截图尺寸: ${screenshotWidth}x${screenshotHeight}")
+        Log.d(TAG, "  - 坐标基准: ${gestureBounds.width}x${gestureBounds.height} (${gestureBounds.source})")
         Log.d(TAG, "  - 输入坐标: ($x, $y)")
         Log.d(TAG, "  - 最终坐标: ($finalX, $finalY)")
         Log.d(TAG, "  - 坐标系统: 从屏幕左上角(0,0)开始，与截图完全一致")
@@ -193,6 +256,108 @@ class PhoneAgentAccessibilityService : AccessibilityService() {
                 Log.d(TAG, "✅ 点击手势回调已正常触发，无需超时保护")
             }
         }, 500) // 500ms 超时保护
+    }
+
+    fun performNodeClickAt(x: Float, y: Float): Boolean {
+        val root = rootInActiveWindow ?: run {
+            Log.w(TAG, "节点点击跳过：rootInActiveWindow 为 null")
+            return false
+        }
+
+        val targetX = x.roundToInt()
+        val targetY = y.roundToInt()
+        var bestNode: AccessibilityNodeInfo? = null
+        var bestArea = Long.MAX_VALUE
+        var bestBounds = Rect()
+
+        fun maybeSelectActionNode(node: AccessibilityNodeInfo) {
+            val nodeBounds = Rect()
+            node.getBoundsInScreen(nodeBounds)
+            if (!nodeBounds.contains(targetX, targetY) || !node.isVisibleToUser) {
+                return
+            }
+
+            val actionNode = findClickableActionNodeCopy(node) ?: return
+            val actionBounds = Rect()
+            actionNode.getBoundsInScreen(actionBounds)
+            if (actionBounds.isEmpty || !actionBounds.contains(targetX, targetY)) {
+                actionNode.recycleSafely()
+                return
+            }
+
+            val area = actionBounds.width().toLong() * actionBounds.height().toLong()
+            if (area in 1 until bestArea) {
+                bestNode.recycleSafely()
+                bestNode = actionNode
+                bestArea = area
+                bestBounds = actionBounds
+            } else {
+                actionNode.recycleSafely()
+            }
+        }
+
+        fun traverse(node: AccessibilityNodeInfo) {
+            maybeSelectActionNode(node)
+            for (i in 0 until node.childCount) {
+                val child = node.getChild(i) ?: continue
+                try {
+                    traverse(child)
+                } finally {
+                    child.recycleSafely()
+                }
+            }
+        }
+
+        traverse(root)
+        val targetNode = bestNode ?: run {
+            Log.d(TAG, "未找到坐标下可点击节点，回退手势点击: ($targetX, $targetY)")
+            return false
+        }
+
+        return try {
+            val clickSuccess = targetNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+            val focusSuccess = if (!clickSuccess && (targetNode.isFocusable || targetNode.isEditable)) {
+                targetNode.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+            } else {
+                false
+            }
+            val success = clickSuccess || focusSuccess
+            Log.d(
+                TAG,
+                "节点点击${if (success) "成功" else "失败"}: ($targetX, $targetY), bounds=$bestBounds, click=$clickSuccess, focus=$focusSuccess"
+            )
+            success
+        } finally {
+            targetNode.recycleSafely()
+        }
+    }
+
+    private fun findClickableActionNodeCopy(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+        var cursor: AccessibilityNodeInfo? = node.copySafely()
+        while (cursor != null) {
+            if (cursor.isVisibleToUser && cursor.isEnabled && (cursor.isClickable || cursor.isEditable)) {
+                return cursor
+            }
+            val parent = cursor.parent
+            cursor.recycleSafely()
+            cursor = parent
+        }
+        return null
+    }
+
+    private fun AccessibilityNodeInfo.copySafely(): AccessibilityNodeInfo? {
+        return runCatching {
+            @Suppress("DEPRECATION")
+            AccessibilityNodeInfo.obtain(this)
+        }.getOrNull()
+    }
+
+    private fun AccessibilityNodeInfo?.recycleSafely() {
+        if (this == null) return
+        runCatching {
+            @Suppress("DEPRECATION")
+            recycle()
+        }
     }
 
     /**
@@ -263,13 +428,13 @@ class PhoneAgentAccessibilityService : AccessibilityService() {
         Log.d(TAG, "准备滑动: ($startX, $startY) -> ($endX, $endY), 时长: ${duration}ms")
         
         // 检查坐标是否有效
-        val displayMetrics = resources.displayMetrics
-        val screenWidth = displayMetrics.widthPixels.toFloat()
-        val screenHeight = displayMetrics.heightPixels.toFloat()
+        val gestureBounds = getGestureDisplayBounds()
+        val screenWidth = gestureBounds.width.toFloat()
+        val screenHeight = gestureBounds.height.toFloat()
         
         if (startX < 0 || startX >= screenWidth || startY < 0 || startY >= screenHeight ||
             endX < 0 || endX >= screenWidth || endY < 0 || endY >= screenHeight) {
-            Log.e(TAG, "❌ 滑动坐标超出屏幕范围: ($startX, $startY) -> ($endX, $endY), 屏幕尺寸: ${screenWidth}x${screenHeight}")
+            Log.e(TAG, "❌ 滑动坐标超出屏幕范围: ($startX, $startY) -> ($endX, $endY), 坐标基准: ${gestureBounds.width}x${gestureBounds.height} (${gestureBounds.source})")
             callback(false)
             return
         }
@@ -651,6 +816,8 @@ class PhoneAgentAccessibilityService : AccessibilityService() {
             val currentApp = getCurrentAppName()
             val packageName = getCurrentPackageName() ?: "未知"
             content.append("当前应用: $currentApp ($packageName)\n\n")
+            val gestureBounds = getGestureDisplayBounds()
+            content.append("坐标基准: ${gestureBounds.width}x${gestureBounds.height} (${gestureBounds.source})，坐标范围 0-1000\n\n")
             
             // 递归遍历所有节点，提取文本和控件信息
             fun traverseNode(node: AccessibilityNodeInfo?, depth: Int = 0) {
@@ -692,12 +859,9 @@ class PhoneAgentAccessibilityService : AccessibilityService() {
                     }
                     
                     // 坐标信息（相对坐标 0-1000）
-                    val displayMetrics = resources.displayMetrics
-                    val screenWidth = displayMetrics.widthPixels
-                    val screenHeight = displayMetrics.heightPixels
-                    val centerX = ((bounds.left + bounds.right) / 2.0 / screenWidth * 1000).toInt()
-                    val centerY = ((bounds.top + bounds.bottom) / 2.0 / screenHeight * 1000).toInt()
+                    val (centerX, centerY) = gestureBounds.centerToRelative(bounds)
                     content.append(" | 坐标: [$centerX, $centerY]")
+                    content.append(" | bounds: [${bounds.left},${bounds.top},${bounds.right},${bounds.bottom}]")
                     
                     // 可操作信息
                     val actions = mutableListOf<String>()

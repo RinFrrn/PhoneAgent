@@ -20,6 +20,7 @@ import com.mobileagent.phoneagent.harness.recover.DefaultRecoveryPolicy
 import com.mobileagent.phoneagent.harness.recover.FailureClassifier
 import com.mobileagent.phoneagent.harness.runtime.HarnessRuntime
 import com.mobileagent.phoneagent.harness.runtime.HarnessStepRecord
+import com.mobileagent.phoneagent.harness.runtime.RuntimeStatusUpdate
 import com.mobileagent.phoneagent.harness.runtime.StepStatus
 import com.mobileagent.phoneagent.harness.spec.TaskSpec
 import com.mobileagent.phoneagent.harness.trace.FileTraceStore
@@ -58,6 +59,7 @@ class PhoneAgent(
     private val systemPrompt: String,
     private val mode: Mode = Mode.VISION, // 运行模式，默认视觉模式
     private val onStepCallback: ((StepResult) -> Unit)? = null,
+    private val onRuntimeStatusCallback: ((RuntimeStatusUpdate) -> Unit)? = null,
     private val onUserInterventionCallback: ((String) -> Unit)? = null
 ) {
     private val TAG = "PhoneAgent"
@@ -177,6 +179,7 @@ class PhoneAgent(
                     taskSpec = taskSpec,
                     screenWidth = screenWidth,
                     screenHeight = screenHeight,
+                    onStatusUpdate = onRuntimeStatusCallback,
                     onStepRecord = { record ->
                         logStepRecord(record)
                         onStepCallback?.invoke(record.toStepResult())

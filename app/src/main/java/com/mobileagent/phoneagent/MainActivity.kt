@@ -37,6 +37,7 @@ import com.mobileagent.phoneagent.harness.eval.ActiveEvalRunner
 import com.mobileagent.phoneagent.harness.eval.ActiveEvalReport
 import com.mobileagent.phoneagent.harness.eval.EvalCase
 import com.mobileagent.phoneagent.harness.eval.EvalRunner
+import com.mobileagent.phoneagent.harness.runtime.RuntimeStatusUpdate
 import com.mobileagent.phoneagent.harness.spec.TaskSpec
 import com.mobileagent.phoneagent.model.ModelClient
 import com.mobileagent.phoneagent.service.AgentForegroundService
@@ -517,10 +518,14 @@ class MainActivity : AppCompatActivity() {
             android.util.Log.d("MainActivity", "无障碍模式，无需 MediaProjection")
         }
 
-        // 获取屏幕尺寸
-        val displayMetrics = resources.displayMetrics
-        val screenWidth = displayMetrics.widthPixels
-        val screenHeight = displayMetrics.heightPixels
+        // 使用无障碍手势坐标基准，确保观察坐标和点击执行坐标一致
+        val gestureBounds = accessibilityService.getGestureDisplayBounds()
+        val screenWidth = gestureBounds.width
+        val screenHeight = gestureBounds.height
+        android.util.Log.d(
+            "MainActivity",
+            "使用手势坐标基准: ${gestureBounds.width}x${gestureBounds.height} (${gestureBounds.source})"
+        )
 
         // 从SharedPreferences读取模型配置
         val provider = SettingsActivity.getProvider(this)
@@ -579,6 +584,9 @@ class MainActivity : AppCompatActivity() {
                 updateNotification(notificationContent)
                 // 在日志中也输出
                 android.util.Log.d("MainActivity", "步骤回调: ${stepResult.thinking.take(100)}")
+            },
+            onRuntimeStatusCallback = { statusUpdate ->
+                updateRuntimeStatus(statusUpdate, task)
             },
             onUserInterventionCallback = { message ->
                 // 显示用户介入通知
@@ -732,9 +740,13 @@ class MainActivity : AppCompatActivity() {
         cases: List<EvalCase>,
         accessibilityService: PhoneAgentAccessibilityService
     ) {
-        val displayMetrics = resources.displayMetrics
-        val screenWidth = displayMetrics.widthPixels
-        val screenHeight = displayMetrics.heightPixels
+        val gestureBounds = accessibilityService.getGestureDisplayBounds()
+        val screenWidth = gestureBounds.width
+        val screenHeight = gestureBounds.height
+        android.util.Log.d(
+            "MainActivity",
+            "评测使用手势坐标基准: ${gestureBounds.width}x${gestureBounds.height} (${gestureBounds.source})"
+        )
         val provider = SettingsActivity.getProvider(this)
         val baseUrl = SettingsActivity.getBaseUrl(this)
         val modelName = SettingsActivity.getModelName(this)
@@ -823,6 +835,9 @@ class MainActivity : AppCompatActivity() {
                     updateStepInfo(stepResult)
                 }
             },
+            onRuntimeStatusCallback = { statusUpdate ->
+                updateRuntimeStatus(statusUpdate, taskSpec.goal)
+            },
             onUserInterventionCallback = { message ->
                 showUserInterventionNotification(message)
             }
@@ -891,6 +906,19 @@ class MainActivity : AppCompatActivity() {
             putExtra("content", content)
         }
         startService(intent)
+    }
+
+    private fun updateRuntimeStatus(statusUpdate: RuntimeStatusUpdate, task: String) {
+        runOnUiThread {
+            binding.tvStatus.text = statusUpdate.status
+        }
+        FloatingOverlayService.update(
+            context = this,
+            status = statusUpdate.status,
+            detail = statusUpdate.detail,
+            task = task
+        )
+        updateNotification("${statusUpdate.status}: ${statusUpdate.detail}")
     }
 
     private fun showUserInterventionNotification(message: String) {

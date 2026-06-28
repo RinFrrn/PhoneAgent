@@ -79,6 +79,15 @@ class ActionHandler(
         return Pair(absoluteX, absoluteY)
     }
 
+    private suspend fun <T> withStatusOverlaySuppressed(block: suspend () -> T): T {
+        FloatingOverlayService.suppressStatusOverlay(accessibilityService.applicationContext)
+        return try {
+            block()
+        } finally {
+            FloatingOverlayService.restoreStatusOverlay(accessibilityService.applicationContext)
+        }
+    }
+
     /**
      * 执行具体操作
      */
@@ -112,10 +121,14 @@ class ActionHandler(
                     y = y,
                     label = "${action.x},${action.y} -> ${absoluteX},${absoluteY}"
                 )
-                FloatingOverlayService.suppressStatusOverlay(accessibilityService.applicationContext)
-                
-                var success: Boolean
-                try {
+
+                val success = withStatusOverlaySuppressed {
+                    val nodeClickSuccess = accessibilityService.performNodeClickAt(x, y)
+                    if (nodeClickSuccess) {
+                        delay(300)
+                        return@withStatusOverlaySuppressed true
+                    }
+
                     // 使用协程的 CompletableDeferred 来等待异步回调
                     val deferred = CompletableDeferred<Boolean>()
 
@@ -127,7 +140,7 @@ class ActionHandler(
                     }
 
                     // 等待点击完成，最多等待 1 秒（因为手势本身只有 100ms，加上回调超时保护 300ms）
-                    success = try {
+                    val dispatched = try {
                         withTimeout(1000) {
                             deferred.await()
                         }
@@ -138,8 +151,7 @@ class ActionHandler(
                     }
                     // 额外等待一小段时间，确保操作生效
                     delay(300)
-                } finally {
-                    FloatingOverlayService.restoreStatusOverlay(accessibilityService.applicationContext)
+                    dispatched
                 }
                 
                 Log.d(TAG, "点击操作完成: success=$success")
@@ -190,23 +202,28 @@ class ActionHandler(
                 val endY = endAbsY.toFloat()
                 Log.d(TAG, "👆 滑动操作: 相对(${action.startX},${action.startY})->(${action.endX},${action.endY}) 绝对($startX,$startY)->($endX,$endY)")
                 
-                val deferred = CompletableDeferred<Boolean>()
-                
-                accessibilityService.swipe(startX, startY, endX, endY, 300) { result ->
-                    Log.d(TAG, "滑动回调结果: $result")
-                    deferred.complete(result)
-                }
-                
-                val success = try {
-                    withTimeout(3000) {
-                        deferred.await()
+                val success = withStatusOverlaySuppressed {
+                    val deferred = CompletableDeferred<Boolean>()
+
+                    accessibilityService.swipe(startX, startY, endX, endY, 300) { result ->
+                        Log.d(TAG, "滑动回调结果: $result")
+                        if (!deferred.isCompleted) {
+                            deferred.complete(result)
+                        }
                     }
-                } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
-                    Log.e(TAG, "❌ 滑动操作超时")
-                    false
+
+                    val dispatched = try {
+                        withTimeout(3000) {
+                            deferred.await()
+                        }
+                    } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+                        Log.e(TAG, "❌ 滑动操作超时")
+                        false
+                    }
+
+                    delay(300)
+                    dispatched
                 }
-                
-                delay(300)
                 Log.d(TAG, "滑动操作完成: success=$success")
                 ActionResult(
                     success = success, 
@@ -229,11 +246,30 @@ class ActionHandler(
                 val x = absoluteX.toFloat()
                 val y = absoluteY.toFloat()
                 Log.d(TAG, "👆 长按操作: 相对(${action.x},${action.y}) -> 绝对($x, $y)")
-                var success = false
-                accessibilityService.longPress(x, y, 500) { result ->
-                    success = result
+                FloatingOverlayService.showTapMarker(
+                    context = accessibilityService.applicationContext,
+                    x = x,
+                    y = y,
+                    label = "long ${action.x},${action.y} -> ${absoluteX},${absoluteY}"
+                )
+                val success = withStatusOverlaySuppressed {
+                    val deferred = CompletableDeferred<Boolean>()
+                    accessibilityService.longPress(x, y, 500) { result ->
+                        if (!deferred.isCompleted) {
+                            deferred.complete(result)
+                        }
+                    }
+                    val dispatched = try {
+                        withTimeout(1500) {
+                            deferred.await()
+                        }
+                    } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+                        Log.e(TAG, "❌ 长按操作超时")
+                        false
+                    }
+                    kotlinx.coroutines.delay(600)
+                    dispatched
                 }
-                kotlinx.coroutines.delay(600)
                 ActionResult(success = success, shouldFinish = false)
             }
             is DoubleTapAction -> {
@@ -247,11 +283,30 @@ class ActionHandler(
                 val x = absoluteX.toFloat()
                 val y = absoluteY.toFloat()
                 Log.d(TAG, "👆 双击操作: 相对(${action.x},${action.y}) -> 绝对($x, $y)")
-                var success = false
-                accessibilityService.doubleTap(x, y) { result ->
-                    success = result
+                FloatingOverlayService.showTapMarker(
+                    context = accessibilityService.applicationContext,
+                    x = x,
+                    y = y,
+                    label = "double ${action.x},${action.y} -> ${absoluteX},${absoluteY}"
+                )
+                val success = withStatusOverlaySuppressed {
+                    val deferred = CompletableDeferred<Boolean>()
+                    accessibilityService.doubleTap(x, y) { result ->
+                        if (!deferred.isCompleted) {
+                            deferred.complete(result)
+                        }
+                    }
+                    val dispatched = try {
+                        withTimeout(1500) {
+                            deferred.await()
+                        }
+                    } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+                        Log.e(TAG, "❌ 双击操作超时")
+                        false
+                    }
+                    kotlinx.coroutines.delay(300)
+                    dispatched
                 }
-                kotlinx.coroutines.delay(300)
                 ActionResult(success = success, shouldFinish = false)
             }
             is LaunchAction -> {

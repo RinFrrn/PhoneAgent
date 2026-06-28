@@ -26,6 +26,11 @@ import com.mobileagent.phoneagent.model.Message
 import com.mobileagent.phoneagent.skill.SkillExecutionAdvisor
 import kotlinx.coroutines.delay
 
+data class RuntimeStatusUpdate(
+    val status: String,
+    val detail: String
+)
+
 class HarnessRuntime(
     private val context: Context,
     private val observationCollector: ObservationCollector,
@@ -46,6 +51,7 @@ class HarnessRuntime(
         taskSpec: TaskSpec,
         screenWidth: Int,
         screenHeight: Int,
+        onStatusUpdate: ((RuntimeStatusUpdate) -> Unit)? = null,
         onStepRecord: ((HarnessStepRecord) -> Unit)? = null,
         onUserIntervention: ((String) -> Unit)? = null,
         onComplete: (TaskOutcome) -> Unit
@@ -65,6 +71,12 @@ class HarnessRuntime(
                 failureTracker.consumeReplanPrompt(taskSpec.goal)?.let(sessionMemory::add)
                 failureTracker.maybeUserInterventionPrompt()?.let(sessionMemory::add)
 
+                onStatusUpdate?.invoke(
+                    RuntimeStatusUpdate(
+                        status = "观察页面中",
+                        detail = "正在读取当前页面状态"
+                    )
+                )
                 val observation = observationCollector.collect()
                 if (observation.failureMessage != null) {
                     val record = HarnessStepRecord(
@@ -101,6 +113,12 @@ class HarnessRuntime(
 
                 sessionMemory.addObservation(observation.contentItems)
 
+                onStatusUpdate?.invoke(
+                    RuntimeStatusUpdate(
+                        status = "AI 生成中",
+                        detail = "正在分析当前页面并生成下一步操作"
+                    )
+                )
                 val decision = try {
                     planner.plan(taskSpec, observation, sessionMemory)
                 } catch (e: Exception) {
@@ -136,6 +154,12 @@ class HarnessRuntime(
                     return
                 }
 
+                onStatusUpdate?.invoke(
+                    RuntimeStatusUpdate(
+                        status = "执行操作中",
+                        detail = "正在执行模型返回的操作"
+                    )
+                )
                 val execution = actionExecutor.execute(
                     ExecutionRequest(
                         actionJson = decision.actionJson,
@@ -146,6 +170,12 @@ class HarnessRuntime(
                     )
                 )
 
+                onStatusUpdate?.invoke(
+                    RuntimeStatusUpdate(
+                        status = "验证结果中",
+                        detail = "正在检查操作是否生效"
+                    )
+                )
                 val afterObservation = collectPostExecutionObservation(execution)
                 val verification = stepVerifier.verify(
                     before = observation,
