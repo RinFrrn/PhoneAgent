@@ -14,6 +14,8 @@ package com.mobileagent.phoneagent
 import android.Manifest
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.view.accessibility.AccessibilityManager
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.ActivityNotFoundException
 import android.content.ComponentName
 import android.content.Intent
@@ -22,6 +24,7 @@ import android.media.projection.MediaProjectionManager
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import android.view.MotionEvent
 import android.view.View
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -56,6 +59,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
 import java.text.SimpleDateFormat
+import java.util.ArrayDeque
 import java.util.Date
 import java.util.Locale
 import kotlin.coroutines.resume
@@ -83,11 +87,22 @@ class MainActivity : AppCompatActivity() {
         private const val REQUEST_CODE_OVERLAY = 105
         private const val ACCESSIBILITY_CONNECT_TIMEOUT_MS = 30_000L
         private const val EXAMPLE_TASK_COUNT = 3
+        private const val MAX_LOG_LINES = 500
+        private const val MAX_LOG_CHARS = 60_000
+        private const val LOG_BOTTOM_THRESHOLD_PX = 48
+        private const val THINKING_PREVIEW_LENGTH = 280
+        private const val ACTION_PREVIEW_LENGTH = 600
+        private const val MESSAGE_PREVIEW_LENGTH = 400
     }
     
     private var isVoiceInputActive = false
     private var voiceActivityDetector: com.mobileagent.phoneagent.utils.VoiceActivityDetector? = null
     private var currentExampleTasks: List<String> = emptyList()
+    private val logLines = ArrayDeque<String>()
+    private var logTextLength = 0
+    private var isLogAutoScrollEnabled = true
+    private var isLogTouching = false
+    private var isLogScrollToBottomPending = false
     private val exampleTaskPool = listOf(
         "打开微信",
         "打开小红书并搜索咖啡",
@@ -183,7 +198,40 @@ class MainActivity : AppCompatActivity() {
             renderMainUiState()
         }
 
+        setupLogControls()
         refreshExampleTasks()
+    }
+
+    private fun setupLogControls() {
+        binding.switchLogAutoScroll.isChecked = isLogAutoScrollEnabled
+        binding.switchLogAutoScroll.setOnCheckedChangeListener { _, isChecked ->
+            isLogAutoScrollEnabled = isChecked
+            if (isChecked) {
+                scrollLogToBottom()
+            }
+        }
+
+        binding.btnClearLog.setOnClickListener {
+            clearLog()
+        }
+
+        binding.btnCopyLog.setOnClickListener {
+            copyLogToClipboard()
+        }
+
+        binding.svLog.setOnTouchListener { view, event ->
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> {
+                    isLogTouching = true
+                    view.parent?.requestDisallowInterceptTouchEvent(true)
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    isLogTouching = false
+                    view.parent?.requestDisallowInterceptTouchEvent(false)
+                }
+            }
+            false
+        }
     }
 
     private fun checkPermissions() {
@@ -746,7 +794,7 @@ class MainActivity : AppCompatActivity() {
         isTaskActive = true
         isAdvancedExpanded = true
         setMainStatus("任务执行中", "应用会进入后台继续执行，可通过悬浮窗观察状态。")
-        binding.tvLog.text = ""
+        clearLog()
         resetStepCount()
         setRecentOverlayResult("任务启动中", "等待第一个执行结果")
 
@@ -1125,39 +1173,62 @@ class MainActivity : AppCompatActivity() {
     private fun updateStepInfo(stepResult: com.mobileagent.phoneagent.agent.StepResult) {
         // 如果是分析中的状态，不增加步骤计数
         if (stepResult.action == "分析中...") {
-            appendLog("========================================")
             appendLog("🤖 AI 分析中...")
-            appendLog("💭 思考过程:")
-            appendLog(stepResult.thinking)
-            appendLog("========================================")
+            appendLog(formatLogSection("思考摘要", stepResult.thinking, THINKING_PREVIEW_LENGTH))
+            appendLog("")
             return
         }
         
         // 如果是执行中的状态，不增加步骤计数
         if (stepResult.message == "正在执行操作...") {
             appendLog("🎯 执行操作:")
-            appendLog(stepResult.action)
+            appendLog(formatLogSection("操作指令", stepResult.action, ACTION_PREVIEW_LENGTH))
+            appendLog("")
             return
         }
         
         // 正常步骤更新
         currentStepCount++
         android.util.Log.d("MainActivity", "📝 更新步骤信息: $currentStepCount")
-        appendLog("========================================")
-        appendLog("步骤 $currentStepCount")
-        appendLog("💭 思考过程:")
-        appendLog(stepResult.thinking)
-        appendLog("")
-        appendLog("🎯 操作指令:")
-        appendLog(stepResult.action)
-        appendLog("")
-        if (stepResult.message != null) {
-            appendLog("📋 执行结果: ${stepResult.message}")
+        appendLog("──── 步骤 $currentStepCount ────")
+        appendLog("状态: ${formatStepStatus(stepResult)}")
+        appendLog(formatLogSection("思考摘要", stepResult.thinking, THINKING_PREVIEW_LENGTH))
+        appendLog(formatLogSection("操作指令", stepResult.action, ACTION_PREVIEW_LENGTH))
+        stepResult.message?.let { message ->
+            appendLog(formatLogSection("执行结果", message, MESSAGE_PREVIEW_LENGTH))
         }
         appendLog("")
-        appendLog("状态: ${if (stepResult.success) "✅ 成功" else "❌ 失败"} | ${if (stepResult.finished) "✅ 任务完成" else "🔄 继续执行"}")
-        appendLog("========================================")
-        appendLog("")
+    }
+
+    private fun formatStepStatus(stepResult: com.mobileagent.phoneagent.agent.StepResult): String {
+        return when {
+            stepResult.finished && stepResult.success -> "任务完成"
+            stepResult.finished -> "已结束"
+            stepResult.success -> "成功，继续执行"
+            else -> "失败"
+        }
+    }
+
+    private fun formatLogSection(title: String, content: String, maxLength: Int): String {
+        val compact = compactLogText(content)
+        val preview = if (compact.length > maxLength) {
+            compact.take(maxLength).trimEnd() + "..."
+        } else {
+            compact
+        }
+        return if (preview.isBlank()) {
+            "$title: 无"
+        } else {
+            "$title: $preview"
+        }
+    }
+
+    private fun compactLogText(text: String): String {
+        return text
+            .lineSequence()
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .joinToString(" ")
     }
     
     private fun resetStepCount() {
@@ -1241,11 +1312,80 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun appendLog(text: String) {
-        binding.tvLog.append("$text\n")
-        // 自动滚动到底部
-        val scrollView = binding.svLog
-        scrollView.post {
-            scrollView.fullScroll(View.FOCUS_DOWN)
+        val shouldFollowBottom = shouldAutoScrollLog()
+        val newLines = text.split('\n')
+        if (newLines.isEmpty()) {
+            appendLogLine("")
+        } else {
+            newLines.forEach(::appendLogLine)
+        }
+        trimLogBuffer()
+        binding.tvLog.text = currentLogText()
+        if (shouldFollowBottom) {
+            scrollLogToBottom()
+        }
+    }
+
+    private fun appendLogLine(line: String) {
+        logLines.addLast(line)
+        logTextLength += line.length + 1
+    }
+
+    private fun trimLogBuffer() {
+        while (logLines.size > MAX_LOG_LINES || logTextLength > MAX_LOG_CHARS) {
+            val removed = logLines.removeFirst()
+            logTextLength -= removed.length + 1
+        }
+    }
+
+    private fun clearLog() {
+        logLines.clear()
+        logTextLength = 0
+        binding.tvLog.text = ""
+        binding.svLog.scrollTo(0, 0)
+    }
+
+    private fun copyLogToClipboard() {
+        val logText = currentLogText()
+        if (logText.isBlank()) {
+            Toast.makeText(this, "暂无日志可复制", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        val clipboard = getSystemService(ClipboardManager::class.java)
+        clipboard.setPrimaryClip(ClipData.newPlainText("PhoneAgent 执行日志", logText))
+        Toast.makeText(this, "日志已复制", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun currentLogText(): String {
+        if (logLines.isEmpty()) {
+            return ""
+        }
+        return buildString(logTextLength) {
+            logLines.forEach { line ->
+                append(line)
+                append('\n')
+            }
+        }
+    }
+
+    private fun shouldAutoScrollLog(): Boolean {
+        return isLogAutoScrollEnabled &&
+            !isLogTouching &&
+            (isLogNearBottom() || isLogScrollToBottomPending)
+    }
+
+    private fun isLogNearBottom(): Boolean {
+        val child = binding.svLog.getChildAt(0) ?: return true
+        val visibleBottom = binding.svLog.scrollY + binding.svLog.height - binding.svLog.paddingBottom
+        return child.bottom - visibleBottom <= LOG_BOTTOM_THRESHOLD_PX
+    }
+
+    private fun scrollLogToBottom() {
+        isLogScrollToBottomPending = true
+        binding.svLog.post {
+            binding.svLog.fullScroll(View.FOCUS_DOWN)
+            isLogScrollToBottomPending = false
         }
     }
 
