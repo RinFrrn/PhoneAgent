@@ -12,6 +12,7 @@ import android.graphics.Bitmap
 import android.media.projection.MediaProjection
 import android.util.Log
 import com.mobileagent.phoneagent.action.ActionHandler
+import com.mobileagent.phoneagent.harness.act.AppLaunchController
 import com.mobileagent.phoneagent.harness.act.DefaultActionExecutor
 import com.mobileagent.phoneagent.harness.observe.DefaultObservationCollector
 import com.mobileagent.phoneagent.harness.plan.LlmPlanner
@@ -74,7 +75,13 @@ class PhoneAgent(
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private val observationCollector = DefaultObservationCollector(screenObserver)
     private val planner = LlmPlanner(context, modelClient, responseActionParser, skillPromptAugmentor)
-    private val actionExecutor = DefaultActionExecutor(context, actionHandler, skillActionInterceptor)
+    private val appLaunchController = AppLaunchController(context, accessibilityService)
+    private val actionExecutor = DefaultActionExecutor(
+        context,
+        actionHandler,
+        skillActionInterceptor,
+        appLaunchController
+    )
     private val stepVerifier = AppAwareStepVerifier(context, GenericStepVerifier())
     private val traceStore = FileTraceStore(context)
     private val failureClassifier = FailureClassifier()

@@ -10,6 +10,7 @@ import com.mobileagent.phoneagent.utils.ScreenshotUtils
 data class ScreenObservation(
     val contentItems: List<ContentItem>,
     val currentApp: String,
+    val currentPackage: String? = null,
     val failureMessage: String? = null
 )
 
@@ -33,6 +34,7 @@ class ScreenObserver(
                     return ScreenObservation(
                         contentItems = emptyList(),
                         currentApp = accessibilityService.getCurrentAppName(),
+                        currentPackage = accessibilityService.getCurrentPackageName(),
                         failureMessage = "截图失败"
                     )
                 }
@@ -64,18 +66,21 @@ class ScreenObserver(
         }
 
         val currentApp = accessibilityService.getCurrentAppName()
+        val currentPackage = accessibilityService.getCurrentPackageName()
         if (contentItems.isEmpty()) {
             Log.e(tag, "未获取到任何屏幕数据")
             return ScreenObservation(
                 contentItems = emptyList(),
                 currentApp = currentApp,
+                currentPackage = currentPackage,
                 failureMessage = "未获取到屏幕数据"
             )
         }
 
         return ScreenObservation(
             contentItems = contentItems,
-            currentApp = currentApp
+            currentApp = currentApp,
+            currentPackage = currentPackage
         )
     }
 }

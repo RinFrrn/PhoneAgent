@@ -33,6 +33,16 @@ class DefaultRecoveryPolicy {
             FailureType.APP_NOT_FOUND -> RecoveryDecision(
                 userMessage = "目标应用未找到。建议检查应用名称、别名或是否已安装。"
             )
+            FailureType.APP_LAUNCH_BLOCKED -> RecoveryDecision(
+                userMessage = "系统阻止了后台应用跳转。请通过悬浮窗或通知点击打开目标应用。"
+            )
+            FailureType.APP_LAUNCH_CONFIRMATION_REQUIRED -> RecoveryDecision(
+                requiresUserTakeover = true,
+                userMessage = execution?.message ?: "应用跳转需要用户确认。请点击悬浮窗或系统弹窗后继续。"
+            )
+            FailureType.APP_LAUNCH_TARGET_NOT_REACHED -> RecoveryDecision(
+                userMessage = "已发送应用跳转请求，但未到达目标应用。请结合当前页面重新判断，不要重复后台启动。"
+            )
             FailureType.VERIFICATION_FAILED, FailureType.ACTION_NOT_EFFECTIVE -> RecoveryDecision(
                 userMessage = buildString {
                     append("上一步操作未产生预期效果。")

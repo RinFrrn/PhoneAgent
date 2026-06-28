@@ -24,6 +24,8 @@ import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.annotation.RequiresApi
+import com.mobileagent.phoneagent.harness.act.PopupConfirmationResult
+import com.mobileagent.phoneagent.harness.act.PopupConfirmationStatus
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -789,5 +791,95 @@ class PhoneAgentAccessibilityService : AccessibilityService() {
             e.printStackTrace()
             false
         }
+    }
+
+    fun confirmLaunchPopupIfPresent(targetPackage: String): PopupConfirmationResult {
+        val root = rootInActiveWindow ?: return PopupConfirmationResult(
+            status = PopupConfirmationStatus.NOT_DETECTED,
+            reason = "rootInActiveWindow 为空"
+        )
+        val popupPackage = root.packageName?.toString()
+        val nodes = mutableListOf<AccessibilityNodeInfo>()
+
+        fun collect(node: AccessibilityNodeInfo?) {
+            if (node == null) return
+            nodes.add(node)
+            for (i in 0 until node.childCount) {
+                collect(node.getChild(i))
+            }
+        }
+
+        return try {
+            collect(root)
+            val visibleText = nodes
+                .mapNotNull { node -> node.text?.toString() ?: node.contentDescription?.toString() }
+                .joinToString(" ")
+            val looksLikeLaunchDialog = containsAny(
+                visibleText,
+                listOf("打开", "启动", "允许", "继续", "跳转", "前往", "应用", "Phone Agent")
+            )
+            if (!looksLikeLaunchDialog) {
+                return PopupConfirmationResult(
+                    status = PopupConfirmationStatus.NOT_DETECTED,
+                    popupPackage = popupPackage,
+                    reason = "未发现启动确认弹窗"
+                )
+            }
+
+            val buttonNode = nodes.firstOrNull { node ->
+                node.isClickable &&
+                    isPositiveLaunchConfirmation(node.text?.toString(), node.contentDescription?.toString())
+            }
+            if (buttonNode == null) {
+                return PopupConfirmationResult(
+                    status = PopupConfirmationStatus.UNSAFE_TO_CONFIRM,
+                    popupPackage = popupPackage,
+                    reason = "发现疑似启动弹窗，但没有明确确认按钮"
+                )
+            }
+
+            val label = buttonNode.text?.toString()
+                ?: buttonNode.contentDescription?.toString()
+                ?: "确认"
+            val clicked = buttonNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+            if (clicked) {
+                PopupConfirmationResult(
+                    status = PopupConfirmationStatus.CONFIRMED,
+                    buttonText = label,
+                    popupPackage = popupPackage
+                )
+            } else {
+                PopupConfirmationResult(
+                    status = PopupConfirmationStatus.UNSAFE_TO_CONFIRM,
+                    buttonText = label,
+                    popupPackage = popupPackage,
+                    reason = "确认按钮点击失败"
+                )
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "处理启动确认弹窗失败: $targetPackage", e)
+            PopupConfirmationResult(
+                status = PopupConfirmationStatus.UNSAFE_TO_CONFIRM,
+                popupPackage = popupPackage,
+                reason = e.message
+            )
+        }
+    }
+
+    private fun isPositiveLaunchConfirmation(text: String?, contentDescription: String?): Boolean {
+        val label = listOfNotNull(text, contentDescription).joinToString(" ").trim()
+        if (label.isBlank()) return false
+        if (containsAny(label, listOf("取消", "拒绝", "不允许", "禁止", "稍后", "否"))) {
+            return false
+        }
+        return containsAny(
+            label,
+            listOf("允许", "打开", "继续", "确认", "确定", "始终允许", "前往", "去开启", "启动")
+        )
+    }
+
+    private fun containsAny(text: String, tokens: List<String>): Boolean {
+        val normalized = text.lowercase()
+        return tokens.any { normalized.contains(it.lowercase()) }
     }
 }

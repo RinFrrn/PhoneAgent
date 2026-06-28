@@ -48,6 +48,18 @@ class GenericStepVerifier(
             )
         }
 
+        if (after == null || after.failureMessage != null) {
+            return VerificationResult(
+                passed = false,
+                confidence = 0.8f,
+                reason = after?.failureMessage ?: "执行后无法重新采集页面状态"
+            )
+        }
+
+        if (execution.launchTrace != null) {
+            return verifyLaunch(before, execution, after)
+        }
+
         val action = runCatching { actionParser.parse(execution.actionJson) }.getOrNull()
         if (action == null) {
             return VerificationResult(
@@ -57,19 +69,11 @@ class GenericStepVerifier(
             )
         }
 
-        if (after == null || after.failureMessage != null) {
-            return VerificationResult(
-                passed = false,
-                confidence = 0.8f,
-                reason = after?.failureMessage ?: "执行后无法重新采集页面状态"
-            )
-        }
-
         return when (action) {
             is FinishAction -> VerificationResult(true, 1.0f, "任务显式结束")
             is WaitAction -> VerificationResult(true, 0.9f, "等待动作无需页面变化验证")
             is TypeAction -> verifyType(before, after)
-            is LaunchAction -> verifyLaunch(before, after)
+            is LaunchAction -> verifyLaunch(before, execution, after)
             is HomeAction -> verifyNavigationChange(before, after, "主页动作")
             is BackAction -> verifyNavigationChange(before, after, "返回动作")
             is SwipeAction -> verifyScrollableChange(before, after)
@@ -78,7 +82,33 @@ class GenericStepVerifier(
         }
     }
 
-    private fun verifyLaunch(before: Observation, after: Observation): VerificationResult {
+    private fun verifyLaunch(
+        before: Observation,
+        execution: ExecutionResult,
+        after: Observation
+    ): VerificationResult {
+        val launchTrace = execution.launchTrace
+        if (launchTrace != null) {
+            val expectedPackage = launchTrace.targetPackage
+            val observedPackage = after.currentPackage ?: launchTrace.afterPackage
+            if (expectedPackage != null && observedPackage == expectedPackage) {
+                return VerificationResult(
+                    true,
+                    0.98f,
+                    "目标包名已到达",
+                    observedChange = "${before.currentPackage ?: before.currentApp} -> $observedPackage"
+                )
+            }
+            if (expectedPackage != null) {
+                return VerificationResult(
+                    false,
+                    0.9f,
+                    "启动后未到达目标包名: expected=$expectedPackage actual=${observedPackage ?: "未知"} strategy=${launchTrace.strategy}",
+                    observedChange = "${before.currentPackage ?: before.currentApp} -> ${observedPackage ?: after.currentApp}"
+                )
+            }
+        }
+
         val beforeApp = before.currentApp.orEmpty()
         val afterApp = after.currentApp.orEmpty()
         return if (afterApp.isNotBlank() && afterApp != beforeApp) {

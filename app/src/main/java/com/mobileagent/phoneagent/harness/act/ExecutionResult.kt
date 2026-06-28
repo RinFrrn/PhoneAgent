@@ -16,5 +16,6 @@ data class ExecutionResult(
     val message: String?,
     val actionJson: String,
     val requiresTakeover: Boolean = false,
-    val failureType: FailureType? = null
+    val failureType: FailureType? = null,
+    val launchTrace: AppLaunchTrace? = null
 )

@@ -13,6 +13,7 @@ class DefaultObservationCollector(
         val observation = screenObserver.observe()
         return Observation(
             currentApp = observation.currentApp,
+            currentPackage = observation.currentPackage,
             contentItems = observation.contentItems,
             failureMessage = observation.failureMessage
         )

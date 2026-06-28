@@ -40,6 +40,7 @@ import com.mobileagent.phoneagent.model.ModelClient
 import com.mobileagent.phoneagent.service.AgentForegroundService
 import com.mobileagent.phoneagent.service.FloatingOverlayService
 import com.mobileagent.phoneagent.service.PhoneAgentAccessibilityService
+import com.mobileagent.phoneagent.utils.ActivityVisibilityTracker
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -64,6 +65,16 @@ class MainActivity : AppCompatActivity() {
     private var isVoiceInputActive = false
     private var voiceActivityDetector: com.mobileagent.phoneagent.utils.VoiceActivityDetector? = null
 
+    override fun onStart() {
+        super.onStart()
+        ActivityVisibilityTracker.markStarted()
+    }
+
+    override fun onStop() {
+        ActivityVisibilityTracker.markStopped()
+        super.onStop()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
@@ -85,6 +96,10 @@ class MainActivity : AppCompatActivity() {
 
         binding.btnRunEval.setOnClickListener {
             startEvalSuite()
+        }
+
+        binding.btnOpenTestTools.setOnClickListener {
+            startActivity(Intent(this, TestToolsActivity::class.java))
         }
 
         binding.btnSettings.setOnClickListener {

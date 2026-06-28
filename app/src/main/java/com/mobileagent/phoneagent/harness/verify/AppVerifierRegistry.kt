@@ -22,6 +22,9 @@ class AppAwareStepVerifier(
         taskSpec: TaskSpec
     ): VerificationResult {
         val base = genericVerifier.verify(before, execution, after, taskSpec)
+        if (execution.launchTrace?.targetPackage != null) {
+            return base
+        }
         val matchedSkill = SkillRegistry.matchingSkills(
             context,
             after?.currentApp ?: before.currentApp,

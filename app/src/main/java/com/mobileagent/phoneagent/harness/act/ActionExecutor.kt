@@ -2,7 +2,9 @@ package com.mobileagent.phoneagent.harness.act
 
 import android.content.Context
 import android.util.Log
+import com.mobileagent.phoneagent.action.ActionParser
 import com.mobileagent.phoneagent.action.ActionHandler
+import com.mobileagent.phoneagent.action.LaunchAction
 import com.mobileagent.phoneagent.harness.recover.FailureType
 import com.mobileagent.phoneagent.skill.SkillActionInterceptor
 
@@ -13,12 +15,25 @@ interface ActionExecutor {
 class DefaultActionExecutor(
     private val context: Context,
     private val actionHandler: ActionHandler,
-    private val skillActionInterceptor: SkillActionInterceptor
+    private val skillActionInterceptor: SkillActionInterceptor,
+    private val appLaunchController: AppLaunchController,
+    private val actionParser: ActionParser = ActionParser()
 ) : ActionExecutor {
     private val tag = "DefaultActionExecutor"
 
     override suspend fun execute(request: ExecutionRequest): ExecutionResult {
         return try {
+            val action = runCatching { actionParser.parse(request.actionJson) }.getOrNull()
+            if (action is LaunchAction) {
+                return appLaunchController.launch(
+                    AppLaunchRequest(
+                        appName = action.appName,
+                        actionJson = request.actionJson,
+                        currentTask = request.taskGoal
+                    )
+                )
+            }
+
             val primaryResult = actionHandler.execute(
                 request.actionJson,
                 request.screenWidth,

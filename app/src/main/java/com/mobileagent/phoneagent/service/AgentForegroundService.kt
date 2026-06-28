@@ -15,11 +15,13 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.IBinder
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import com.mobileagent.phoneagent.LaunchProxyActivity
 import com.mobileagent.phoneagent.MainActivity
 import com.mobileagent.phoneagent.R
 import com.mobileagent.phoneagent.agent.Mode
@@ -40,6 +42,22 @@ class AgentForegroundService : Service() {
         const val EXTRA_BASE_URL = "base_url"
         const val EXTRA_MODEL_NAME = "model_name"
         const val EXTRA_MODE = "mode"
+        private const val ACTION_SHOW_LAUNCH_HANDOFF = "com.mobileagent.phoneagent.SHOW_LAUNCH_HANDOFF"
+        private const val EXTRA_LAUNCH_REQUEST_ID = "launch_request_id"
+        private const val EXTRA_LAUNCH_APP_LABEL = "launch_app_label"
+
+        fun showLaunchHandoffNotification(
+            context: Context,
+            launchRequestId: String,
+            appLabel: String
+        ) {
+            val intent = Intent(context, AgentForegroundService::class.java).apply {
+                action = ACTION_SHOW_LAUNCH_HANDOFF
+                putExtra(EXTRA_LAUNCH_REQUEST_ID, launchRequestId)
+                putExtra(EXTRA_LAUNCH_APP_LABEL, appLabel)
+            }
+            context.startService(intent)
+        }
     }
 
     private var isRunning = false
@@ -124,6 +142,13 @@ class AgentForegroundService : Service() {
             "SHOW_USER_INTERVENTION" -> {
                 val message = intent?.getStringExtra("message") ?: "需要用户介入"
                 showUserInterventionNotification(message)
+            }
+            ACTION_SHOW_LAUNCH_HANDOFF -> {
+                val requestId = intent.getStringExtra(EXTRA_LAUNCH_REQUEST_ID)
+                val appLabel = intent.getStringExtra(EXTRA_LAUNCH_APP_LABEL) ?: "目标应用"
+                if (requestId != null) {
+                    showLaunchHandoffNotification(requestId, appLabel)
+                }
             }
         }
         return START_STICKY
@@ -261,6 +286,36 @@ class AgentForegroundService : Service() {
             .setAutoCancel(true)
             .setDefaults(Notification.DEFAULT_SOUND or Notification.DEFAULT_VIBRATE)
             .setStyle(NotificationCompat.BigTextStyle().bigText(message))
+            .build()
+
+        val notificationManager = getSystemService(NotificationManager::class.java)
+        notificationManager.notify(NOTIFICATION_ID_USER_INTERVENTION, notification)
+    }
+
+    private fun showLaunchHandoffNotification(requestId: String, appLabel: String) {
+        val pendingIntent = PendingIntent.getActivity(
+            this,
+            requestId.hashCode(),
+            LaunchProxyActivity.intentFor(this, requestId),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val channelId = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            "${CHANNEL_ID}_intervention"
+        } else {
+            CHANNEL_ID
+        }
+
+        val notification = NotificationCompat.Builder(this, channelId)
+            .setContentTitle("需要打开应用")
+            .setContentText("点击继续打开 $appLabel")
+            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setContentIntent(pendingIntent)
+            .addAction(R.drawable.ic_launcher_foreground, "打开$appLabel", pendingIntent)
+            .setOngoing(false)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setAutoCancel(true)
+            .setDefaults(Notification.DEFAULT_SOUND or Notification.DEFAULT_VIBRATE)
             .build()
 
         val notificationManager = getSystemService(NotificationManager::class.java)

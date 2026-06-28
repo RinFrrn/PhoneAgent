@@ -1,0 +1,115 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="16dp">
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="12dp"
+            android:text="功能测试"
+            android:textSize="20sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/tvTestStatus"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="12dp"
+            android:text="状态：等待测试"
+            android:textSize="14sp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="8dp"
+            android:text="应用启动"
+            android:textStyle="bold" />
+
+        <EditText
+            android:id="@+id/etAppName"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="8dp"
+            android:hint="应用名，例如：微信"
+            android:inputType="text"
+            android:singleLine="true"
+            android:text="微信" />
+
+        <Button
+            android:id="@+id/btnTestLaunchApp"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="16dp"
+            android:text="测试启动应用" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="8dp"
+            android:text="屏幕读取"
+            android:textStyle="bold" />
+
+        <Button
+            android:id="@+id/btnReadScreenContent"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="8dp"
+            android:text="读取无障碍屏幕内容" />
+
+        <Button
+            android:id="@+id/btnRequestCapture"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="8dp"
+            android:text="授权屏幕录制" />
+
+        <Button
+            android:id="@+id/btnCaptureScreenshot"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="12dp"
+            android:text="读取屏幕截图" />
+
+        <ImageView
+            android:id="@+id/ivScreenshot"
+            android:layout_width="match_parent"
+            android:layout_height="240dp"
+            android:layout_marginBottom="12dp"
+            android:adjustViewBounds="true"
+            android:background="#EEEEEE"
+            android:contentDescription="截图预览"
+            android:scaleType="fitCenter" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="8dp"
+            android:text="测试日志"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/tvTestLog"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="#F5F5F5"
+            android:fontFamily="monospace"
+            android:minHeight="240dp"
+            android:padding="8dp"
+            android:text="等待测试...\n"
+            android:textSize="12sp" />
+
+        <Button
+            android:id="@+id/btnBack"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="返回" />
+    </LinearLayout>
+</ScrollView>

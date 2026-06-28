@@ -69,6 +69,19 @@
             android:name=".SettingsActivity"
             android:exported="false"
             android:theme="@style/Theme.PhoneAgent" />
+
+        <activity
+            android:name=".TestToolsActivity"
+            android:exported="false"
+            android:theme="@style/Theme.PhoneAgent" />
+
+        <activity
+            android:name=".LaunchProxyActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:finishOnTaskLaunch="true"
+            android:noHistory="true"
+            android:theme="@style/Theme.PhoneAgent" />
         
         <!-- 无障碍服务 -->
         <service

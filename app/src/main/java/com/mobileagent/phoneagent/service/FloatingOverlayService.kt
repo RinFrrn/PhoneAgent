@@ -14,7 +14,7 @@ import android.view.View
 import android.view.WindowManager
 import android.widget.Button
 import android.widget.TextView
-import androidx.core.content.ContextCompat
+import com.mobileagent.phoneagent.LaunchProxyActivity
 import com.mobileagent.phoneagent.MainActivity
 import com.mobileagent.phoneagent.R
 import com.mobileagent.phoneagent.agent.AgentSessionCoordinator
@@ -29,6 +29,8 @@ class FloatingOverlayService : Service() {
         private const val EXTRA_DETAIL = "detail"
         private const val EXTRA_TASK = "task"
         private const val EXTRA_INTERACTION_REQUIRED = "interaction_required"
+        private const val EXTRA_LAUNCH_REQUEST_ID = "launch_request_id"
+        private const val EXTRA_LAUNCH_APP_LABEL = "launch_app_label"
 
         fun canDraw(context: Context): Boolean = Settings.canDrawOverlays(context)
 
@@ -78,6 +80,27 @@ class FloatingOverlayService : Service() {
             context.startService(intent)
         }
 
+        fun showLaunchHandoff(
+            context: Context,
+            status: String,
+            detail: String,
+            task: String,
+            launchRequestId: String,
+            appLabel: String
+        ) {
+            if (!canDraw(context)) return
+            val intent = Intent(context, FloatingOverlayService::class.java).apply {
+                action = ACTION_SHOW
+                putExtra(EXTRA_STATUS, status)
+                putExtra(EXTRA_DETAIL, detail)
+                putExtra(EXTRA_TASK, task)
+                putExtra(EXTRA_INTERACTION_REQUIRED, true)
+                putExtra(EXTRA_LAUNCH_REQUEST_ID, launchRequestId)
+                putExtra(EXTRA_LAUNCH_APP_LABEL, appLabel)
+            }
+            context.startService(intent)
+        }
+
         fun hide(context: Context) {
             val intent = Intent(context, FloatingOverlayService::class.java).apply {
                 action = ACTION_HIDE
@@ -92,6 +115,7 @@ class FloatingOverlayService : Service() {
     private var detailText: TextView? = null
     private var taskText: TextView? = null
     private var confirmButton: Button? = null
+    private var currentLaunchRequestId: String? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -111,7 +135,9 @@ class FloatingOverlayService : Service() {
                     detail = intent.getStringExtra(EXTRA_DETAIL) ?: "",
                     task = intent.getStringExtra(EXTRA_TASK)
                         ?: (AgentSessionCoordinator.currentTask() ?: "未设置任务"),
-                    interactionRequired = intent.getBooleanExtra(EXTRA_INTERACTION_REQUIRED, false)
+                    interactionRequired = intent.getBooleanExtra(EXTRA_INTERACTION_REQUIRED, false),
+                    launchRequestId = intent.getStringExtra(EXTRA_LAUNCH_REQUEST_ID),
+                    launchAppLabel = intent.getStringExtra(EXTRA_LAUNCH_APP_LABEL)
                 )
             }
             ACTION_HIDE -> {
@@ -154,7 +180,12 @@ class FloatingOverlayService : Service() {
         taskText = view.findViewById(R.id.tvOverlayTask)
         confirmButton = view.findViewById<Button?>(R.id.btnOverlayConfirm).apply {
             this?.setOnClickListener {
-                AgentSessionCoordinator.confirmUserAction()
+                val requestId = currentLaunchRequestId
+                if (requestId != null) {
+                    startActivity(LaunchProxyActivity.intentFor(this@FloatingOverlayService, requestId))
+                } else {
+                    AgentSessionCoordinator.confirmUserAction()
+                }
                 visibility = View.GONE
             }
         }
@@ -180,10 +211,23 @@ class FloatingOverlayService : Service() {
         windowManager?.addView(view, params)
     }
 
-    private fun updateOverlay(status: String, detail: String, task: String, interactionRequired: Boolean) {
+    private fun updateOverlay(
+        status: String,
+        detail: String,
+        task: String,
+        interactionRequired: Boolean,
+        launchRequestId: String?,
+        launchAppLabel: String?
+    ) {
+        currentLaunchRequestId = launchRequestId
         statusText?.text = status
         detailText?.text = detail
         taskText?.text = task
+        confirmButton?.text = if (launchRequestId != null) {
+            "打开${launchAppLabel ?: "应用"}"
+        } else {
+            "已处理"
+        }
         confirmButton?.visibility = if (interactionRequired) View.VISIBLE else View.GONE
     }
 
@@ -196,5 +240,6 @@ class FloatingOverlayService : Service() {
         detailText = null
         taskText = null
         confirmButton = null
+        currentLaunchRequestId = null
     }
 }
