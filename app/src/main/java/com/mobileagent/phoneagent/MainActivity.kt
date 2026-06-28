@@ -124,10 +124,6 @@ class MainActivity : AppCompatActivity() {
             openAccessibilitySettings()
         }
 
-        binding.btnScreenCapturePermission.setOnClickListener {
-            requestScreenCapturePermission()
-        }
-
         binding.btnOverlayPermission.setOnClickListener {
             val intent = Intent(
                 Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
@@ -143,15 +139,12 @@ class MainActivity : AppCompatActivity() {
         val screenCaptureEnabled = mediaProjection != null
 
         binding.tvAccessibilityStatus.text = if (accessibilityEnabled) "无障碍：已授权" else "无障碍：未授权"
-        binding.tvScreenCaptureStatus.text = if (screenCaptureEnabled) "屏幕录制：已授权" else "屏幕录制：未授权"
         binding.tvOverlayStatus.text = if (overlayEnabled) "悬浮窗：已授权" else "悬浮窗：未授权"
 
         binding.btnAccessibilityPermission.text = if (accessibilityEnabled) "已开启" else "去开启"
-        binding.btnScreenCapturePermission.text = if (screenCaptureEnabled) "已授权" else "去授权"
         binding.btnOverlayPermission.text = if (overlayEnabled) "已授权" else "去授权"
 
         binding.btnAccessibilityPermission.isEnabled = !accessibilityEnabled
-        binding.btnScreenCapturePermission.isEnabled = !screenCaptureEnabled
         binding.btnOverlayPermission.isEnabled = !overlayEnabled
 
         if (!accessibilityEnabled) {
