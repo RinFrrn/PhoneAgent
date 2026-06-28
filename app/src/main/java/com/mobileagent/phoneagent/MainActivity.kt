@@ -23,6 +23,8 @@ import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.view.View
+import android.widget.LinearLayout
+import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
@@ -39,6 +41,9 @@ import com.mobileagent.phoneagent.harness.eval.EvalCase
 import com.mobileagent.phoneagent.harness.eval.EvalRunner
 import com.mobileagent.phoneagent.harness.runtime.RuntimeStatusUpdate
 import com.mobileagent.phoneagent.harness.spec.TaskSpec
+import com.mobileagent.phoneagent.harness.trace.FileTraceStore
+import com.mobileagent.phoneagent.harness.trace.TaskHistoryEntry
+import com.mobileagent.phoneagent.harness.trace.TaskHistoryStatus
 import com.mobileagent.phoneagent.model.ModelClient
 import com.mobileagent.phoneagent.service.AgentForegroundService
 import com.mobileagent.phoneagent.service.FloatingOverlayService
@@ -48,6 +53,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import kotlin.coroutines.resume
 
 class MainActivity : AppCompatActivity() {
@@ -56,6 +64,11 @@ class MainActivity : AppCompatActivity() {
     private var phoneAgent: PhoneAgent? = null
     private var foregroundService: AgentForegroundService? = null
     private var evalJob: Job? = null
+    private var mainStatusMessage: String? = null
+    private var mainStatusDetail: String? = null
+    private var isTaskActive = false
+    private var isAdvancedExpanded = false
+    private val traceStore by lazy { FileTraceStore(this) }
 
     companion object {
         private const val REQUEST_CODE_ACCESSIBILITY = 100
@@ -107,10 +120,6 @@ class MainActivity : AppCompatActivity() {
             startActivity(Intent(this, TestToolsActivity::class.java))
         }
 
-        binding.btnSettings.setOnClickListener {
-            openAccessibilitySettings()
-        }
-
         binding.btnOpenSettings.setOnClickListener {
             val intent = Intent(this, SettingsActivity::class.java)
             startActivity(intent)
@@ -131,35 +140,23 @@ class MainActivity : AppCompatActivity() {
             )
             startActivityForResult(intent, REQUEST_CODE_OVERLAY)
         }
+
+        binding.modeToggleGroup.addOnButtonCheckedListener { _, _, isChecked ->
+            if (isChecked) {
+                mainStatusMessage = null
+                mainStatusDetail = null
+                renderMainUiState()
+            }
+        }
+
+        binding.btnAdvancedToggle.setOnClickListener {
+            isAdvancedExpanded = !isAdvancedExpanded
+            renderMainUiState()
+        }
     }
 
     private fun checkPermissions() {
-        val accessibilityEnabled = isAccessibilityServiceEnabled()
-        val overlayEnabled = Settings.canDrawOverlays(this)
-        val screenCaptureEnabled = mediaProjection != null
-
-        binding.tvAccessibilityStatus.text = if (accessibilityEnabled) "无障碍：已授权" else "无障碍：未授权"
-        binding.tvOverlayStatus.text = if (overlayEnabled) "悬浮窗：已授权" else "悬浮窗：未授权"
-
-        binding.btnAccessibilityPermission.text = if (accessibilityEnabled) "已开启" else "去开启"
-        binding.btnOverlayPermission.text = if (overlayEnabled) "已授权" else "去授权"
-
-        binding.btnAccessibilityPermission.isEnabled = !accessibilityEnabled
-        binding.btnOverlayPermission.isEnabled = !overlayEnabled
-
-        if (!accessibilityEnabled) {
-            binding.tvStatus.text = "请先启用无障碍服务"
-//            binding.btnSettings.visibility = View.VISIBLE
-        } else if (!overlayEnabled) {
-            binding.tvStatus.text = "请授予悬浮窗权限"
-            binding.btnSettings.visibility = View.GONE
-        } else if (!screenCaptureEnabled && getSelectedMode() != Mode.ACCESSIBILITY) {
-            binding.tvStatus.text = "当前模式需要屏幕录制权限"
-            binding.btnSettings.visibility = View.GONE
-        } else {
-            binding.tvStatus.text = "权限已就绪"
-            binding.btnSettings.visibility = View.GONE
-        }
+        renderMainUiState()
 
         // Android 13+ 需要请求通知权限
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -179,6 +176,80 @@ class MainActivity : AppCompatActivity() {
 
         // 不在这里请求屏幕录制权限，等用户点击"开始任务"时再请求
         // 这样可以避免应用启动时立即弹出权限对话框
+    }
+
+    private fun setMainStatus(message: String, detail: String? = null) {
+        mainStatusMessage = message
+        mainStatusDetail = detail
+        renderMainUiState()
+    }
+
+    private fun renderMainUiState() {
+        if (!::binding.isInitialized) return
+
+        val accessibilityEnabled = isAccessibilityServiceEnabled()
+        val overlayEnabled = Settings.canDrawOverlays(this)
+        val selectedMode = getSelectedMode()
+        val visualMode = selectedMode != Mode.ACCESSIBILITY
+        val running = isTaskActive || phoneAgent?.isTaskRunning() == true || evalJob != null
+
+        binding.tvAccessibilityStatus.text = if (accessibilityEnabled) "无障碍：已开启" else "无障碍：未开启"
+        binding.tvOverlayStatus.text = if (overlayEnabled) "悬浮窗：已授权" else "悬浮窗：未授权"
+        binding.btnAccessibilityPermission.text = if (accessibilityEnabled) "已开启" else "去开启"
+        binding.btnOverlayPermission.text = if (overlayEnabled) "已授权" else "去授权"
+        binding.btnAccessibilityPermission.isEnabled = !accessibilityEnabled
+        binding.btnOverlayPermission.isEnabled = !overlayEnabled
+
+        binding.rowAccessibilityPermission.visibility = if (accessibilityEnabled) View.GONE else View.VISIBLE
+        binding.rowOverlayPermission.visibility = if (overlayEnabled) View.GONE else View.VISIBLE
+        binding.cardPermissionGuide.visibility =
+            if (accessibilityEnabled && overlayEnabled) View.GONE else View.VISIBLE
+        binding.tvPermissionHint.text = when {
+            !accessibilityEnabled && !overlayEnabled -> "开启无障碍和悬浮窗后，就可以开始执行任务。"
+            !accessibilityEnabled -> "无障碍服务用于读取界面内容并执行点击、滑动等操作。"
+            !overlayEnabled -> "悬浮窗用于在任务后台运行时显示状态和等待处理。"
+            else -> "基础权限已完成。"
+        }
+
+        binding.tvModeHint.text = when (selectedMode) {
+            Mode.ACCESSIBILITY -> "仅使用无障碍结构化内容，不会请求屏幕录制。"
+            Mode.VISION -> "开始任务时会请求屏幕录制权限，用于截图分析。"
+            Mode.HYBRID -> "开始任务时会请求屏幕录制权限，并结合无障碍内容分析。"
+        }
+
+        val modelConfig = SettingsActivity.getActiveModelConfig(this)
+        val modelName = modelConfig.modelName.ifBlank { "未配置模型" }
+        binding.tvModelSummary.text = if (modelConfig.displayName == modelName) {
+            "模型：${modelConfig.provider.displayName} · $modelName"
+        } else {
+            "模型：${modelConfig.displayName} · ${modelConfig.provider.displayName} · $modelName"
+        }
+
+        val defaultStatus = when {
+            running -> "任务执行中"
+            !accessibilityEnabled -> "需要开启无障碍服务"
+            !overlayEnabled -> "需要授权悬浮窗"
+            else -> "已就绪"
+        }
+        val defaultDetail = when {
+            running -> "可以回到手机继续操作，或在这里停止任务。"
+            !accessibilityEnabled -> "点击下方按钮进入系统设置，找到 Phone Agent 并开启。"
+            !overlayEnabled -> "点击下方按钮进入系统设置，允许显示在其他应用上层。"
+            visualMode -> "当前模式会在开始时请求一次屏幕录制权限。"
+            else -> "输入任务描述后即可开始。"
+        }
+
+        binding.tvStatus.text = mainStatusMessage ?: defaultStatus
+        binding.tvStatusDetail.text = mainStatusDetail ?: defaultDetail
+
+        binding.btnStart.isEnabled = !running
+        binding.btnStop.isEnabled = running
+        binding.btnRunEval.isEnabled = !running
+
+        val showAdvanced = isAdvancedExpanded || running
+        binding.advancedContent.visibility = if (showAdvanced) View.VISIBLE else View.GONE
+        binding.btnAdvancedToggle.text = if (showAdvanced) "收起高级工具" else "高级工具"
+        renderTaskHistory()
     }
 
     private fun isAccessibilityServiceEnabled(): Boolean {
@@ -217,7 +288,7 @@ class MainActivity : AppCompatActivity() {
             return null
         }
 
-        binding.tvStatus.text = "无障碍服务已授权，正在等待服务连接..."
+        setMainStatus("正在等待无障碍服务连接", "系统服务已开启，正在等待 Phone Agent 建立连接。")
         return withTimeoutOrNull(timeoutMs) {
             suspendCancellableCoroutine { continuation ->
                 lateinit var listener: (PhoneAgentAccessibilityService?) -> Unit
@@ -354,7 +425,7 @@ class MainActivity : AppCompatActivity() {
                             } catch (e: Exception) {
                                 android.util.Log.e("MainActivity", "❌ 创建 MediaProjection 失败", e)
                                 Toast.makeText(this, "创建屏幕录制失败: ${e.message}", Toast.LENGTH_LONG).show()
-                                binding.tvStatus.text = "屏幕录制初始化失败"
+                                setMainStatus("屏幕录制初始化失败", e.message)
                             }
                         }, 500)
                     } catch (e: Exception) {
@@ -363,6 +434,8 @@ class MainActivity : AppCompatActivity() {
                     }
                 } else {
                     Toast.makeText(this, "需要屏幕录制权限才能截图，请重新点击开始任务", Toast.LENGTH_LONG).show()
+                    isTaskActive = false
+                    setMainStatus("屏幕录制未授权", "视觉或混合模式需要截图权限；也可以切换到无障碍模式。")
                     checkPermissions()
                 }
             }
@@ -399,11 +472,11 @@ class MainActivity : AppCompatActivity() {
      * 获取当前选择的运行模式
      */
     private fun getSelectedMode(): Mode {
-        return when (binding.rgMode.checkedRadioButtonId) {
-            binding.rbVisionMode.id -> Mode.VISION
-            binding.rbAccessibilityMode.id -> Mode.ACCESSIBILITY
-            binding.rbHybridMode.id -> Mode.HYBRID
-            else -> Mode.VISION // 默认视觉模式
+        return when (binding.modeToggleGroup.checkedButtonId) {
+            binding.btnModeVision.id -> Mode.VISION
+            binding.btnModeAccessibility.id -> Mode.ACCESSIBILITY
+            binding.btnModeHybrid.id -> Mode.HYBRID
+            else -> Mode.ACCESSIBILITY // 默认无障碍模式
         }
     }
 
@@ -451,6 +524,7 @@ class MainActivity : AppCompatActivity() {
             // 视觉模式和混合模式需要屏幕录制权限
             if (mediaProjection == null) {
                 Toast.makeText(this, "正在请求屏幕录制权限...", Toast.LENGTH_SHORT).show()
+                setMainStatus("准备请求屏幕录制权限", "系统会弹出确认窗口，用于本次任务截图分析。")
                 requestScreenCapturePermission()
                 return
             }
@@ -462,8 +536,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun startTaskInternal() {
         lifecycleScope.launch {
-            binding.btnStart.isEnabled = false
-            binding.tvStatus.text = "正在连接无障碍服务..."
+            isTaskActive = true
+            setMainStatus("正在连接无障碍服务", "请稍等，连接成功后会自动开始任务。")
             val accessibilityService = awaitAccessibilityServiceConnection()
             if (accessibilityService == null) {
                 val message = if (isAccessibilityServiceEnabled()) {
@@ -471,8 +545,8 @@ class MainActivity : AppCompatActivity() {
                 } else {
                     "无障碍服务未启用，请在系统设置中启用无障碍服务"
                 }
-                binding.tvStatus.text = message
-                binding.btnStart.isEnabled = true
+                isTaskActive = false
+                setMainStatus(message)
                 Toast.makeText(this@MainActivity, message, Toast.LENGTH_LONG).show()
                 return@launch
             }
@@ -499,7 +573,8 @@ class MainActivity : AppCompatActivity() {
             if (mediaProjection == null) {
                 android.util.Log.w("MainActivity", "⚠️ MediaProjection 为 null，需要重新请求权限（模式: $selectedMode）")
                 Toast.makeText(this, "屏幕录制权限未授予，正在重新请求...", Toast.LENGTH_SHORT).show()
-                binding.btnStart.isEnabled = true
+                isTaskActive = false
+                setMainStatus("准备请求屏幕录制权限", "系统会弹出确认窗口，用于本次任务截图分析。")
                 requestScreenCapturePermission()
                 return
             }
@@ -521,14 +596,15 @@ class MainActivity : AppCompatActivity() {
         )
 
         // 从SharedPreferences读取模型配置
-        val provider = SettingsActivity.getProvider(this)
-        val baseUrl = SettingsActivity.getBaseUrl(this)
-        val modelName = SettingsActivity.getModelName(this)
-        val apiKey = SettingsActivity.getApiKey(this)
-        val temperature = SettingsActivity.getTemperature(this)
-        val topP = SettingsActivity.getTopP(this)
+        val modelConfig = SettingsActivity.getActiveModelConfig(this)
+        val provider = modelConfig.provider
+        val baseUrl = modelConfig.baseUrl
+        val modelName = modelConfig.modelName
+        val apiKey = modelConfig.apiKey
+        val temperature = modelConfig.temperature
+        val topP = modelConfig.topP
 
-        android.util.Log.d("MainActivity", "使用模型配置: provider=${provider.displayName}, baseUrl=$baseUrl, modelName=$modelName, temperature=$temperature, topP=$topP")
+        android.util.Log.d("MainActivity", "使用模型配置: name=${modelConfig.displayName}, provider=${provider.displayName}, baseUrl=$baseUrl, modelName=$modelName, temperature=$temperature, topP=$topP")
 
         val modelClient = ModelClient(baseUrl, modelName, apiKey, provider, temperature, topP)
         val systemPrompt = getSystemPrompt() // 从资源文件读取
@@ -548,6 +624,7 @@ class MainActivity : AppCompatActivity() {
         phoneAgent = PhoneAgent(
             context = this,
             modelClient = modelClient,
+            modelDisplayName = modelConfig.displayName,
             accessibilityService = accessibilityService,
             mediaProjection = mediaProjectionForAgent, // 无障碍模式下为 null
             screenWidth = screenWidth,
@@ -595,9 +672,9 @@ class MainActivity : AppCompatActivity() {
         )
 
         // 更新 UI
-        binding.btnStart.isEnabled = false
-        binding.btnStop.isEnabled = true
-        binding.tvStatus.text = "任务执行中（后台运行）..."
+        isTaskActive = true
+        isAdvancedExpanded = true
+        setMainStatus("任务执行中", "应用会进入后台继续执行，可通过悬浮窗观察状态。")
         binding.tvLog.text = ""
         resetStepCount()
 
@@ -615,7 +692,7 @@ class MainActivity : AppCompatActivity() {
 
         // 运行任务
         appendLog("🚀 开始执行任务: $task")
-        appendLog("模型: $modelName")
+        appendLog("模型: ${modelConfig.displayName} · $modelName")
         appendLog("API: $baseUrl")
         appendLog("")
         
@@ -629,17 +706,17 @@ class MainActivity : AppCompatActivity() {
         phoneAgent?.run(task) { result ->
             android.util.Log.d("MainActivity", "任务结束回调: $result")
             runOnUiThread {
-                binding.btnStart.isEnabled = true
-                binding.btnStop.isEnabled = false
                 appendLog("")
                 appendLog("========================================")
                 if (result.success) {
-                    binding.tvStatus.text = "任务完成: ${result.message}"
+                    isTaskActive = false
+                    setMainStatus("任务完成", result.message)
                     appendLog("✅ 任务完成: ${result.message}")
                     android.util.Log.d("MainActivity", "任务完成，清理 MediaProjection，下次启动时将重新请求权限")
                     mediaProjection = null
                 } else {
-                    binding.tvStatus.text = "任务失败: ${result.message}"
+                    isTaskActive = false
+                    setMainStatus("任务失败", result.message)
                     appendLog("❌ 任务失败: ${result.message}")
                     android.util.Log.w("MainActivity", "任务失败，保留 MediaProjection 以便用户修正后重试")
                 }
@@ -648,7 +725,7 @@ class MainActivity : AppCompatActivity() {
                 phoneAgent = null
                 AgentSessionCoordinator.clear()
                 FloatingOverlayService.hide(this@MainActivity)
-                checkPermissions()
+                renderMainUiState()
             }
             // 停止前台服务
             val stopIntent = Intent(this, AgentForegroundService::class.java).apply {
@@ -665,13 +742,10 @@ class MainActivity : AppCompatActivity() {
         phoneAgent = null
         AgentSessionCoordinator.clear()
         FloatingOverlayService.hide(this)
+        isTaskActive = false
         
         stopTaskForegroundService()
-        
-        binding.btnStart.isEnabled = true
-        binding.btnStop.isEnabled = false
-        binding.btnRunEval.isEnabled = true
-        checkPermissions()
+        setMainStatus("任务已停止", "可以修改任务描述后重新开始。")
         appendLog("任务已停止")
         
         // 停止VAD检测
@@ -719,7 +793,7 @@ class MainActivity : AppCompatActivity() {
                 } else {
                     "无障碍服务未启用，请在系统设置中启用无障碍服务"
                 }
-                binding.tvStatus.text = message
+                setMainStatus(message)
                 Toast.makeText(this@MainActivity, message, Toast.LENGTH_LONG).show()
                 return@launch
             }
@@ -740,19 +814,19 @@ class MainActivity : AppCompatActivity() {
             "MainActivity",
             "评测使用手势坐标基准: ${gestureBounds.width}x${gestureBounds.height} (${gestureBounds.source})"
         )
-        val provider = SettingsActivity.getProvider(this)
-        val baseUrl = SettingsActivity.getBaseUrl(this)
-        val modelName = SettingsActivity.getModelName(this)
-        val apiKey = SettingsActivity.getApiKey(this)
-        val temperature = SettingsActivity.getTemperature(this)
-        val topP = SettingsActivity.getTopP(this)
+        val modelConfig = SettingsActivity.getActiveModelConfig(this)
+        val provider = modelConfig.provider
+        val baseUrl = modelConfig.baseUrl
+        val modelName = modelConfig.modelName
+        val apiKey = modelConfig.apiKey
+        val temperature = modelConfig.temperature
+        val topP = modelConfig.topP
         val systemPrompt = getSystemPrompt()
 
         val activeEvalRunner = ActiveEvalRunner(evalRunner)
-        binding.btnStart.isEnabled = false
-        binding.btnStop.isEnabled = true
-        binding.btnRunEval.isEnabled = false
-        binding.tvStatus.text = "评测执行中..."
+        isTaskActive = true
+        isAdvancedExpanded = true
+        setMainStatus("评测执行中", "正在按默认用例运行回归评测。")
         binding.tvLog.text = ""
         resetStepCount()
         appendLog("🧪 开始运行评测，共 ${cases.size} 个用例")
@@ -766,6 +840,7 @@ class MainActivity : AppCompatActivity() {
                     screenHeight = screenHeight,
                     baseUrl = baseUrl,
                     modelName = modelName,
+                    modelDisplayName = modelConfig.displayName,
                     apiKey = apiKey,
                     provider = provider,
                     temperature = temperature,
@@ -775,14 +850,11 @@ class MainActivity : AppCompatActivity() {
             }
 
             runOnUiThread {
-                binding.btnStart.isEnabled = true
-                binding.btnStop.isEnabled = false
-                binding.btnRunEval.isEnabled = true
-                checkPermissions()
-                binding.tvStatus.text = "评测完成: ${report.passedCases}/${report.totalCases}"
+                isTaskActive = false
+                evalJob = null
+                setMainStatus("评测完成", "通过 ${report.passedCases}/${report.totalCases} 个用例。")
                 appendEvalReport(report)
             }
-            evalJob = null
         }
     }
 
@@ -793,6 +865,7 @@ class MainActivity : AppCompatActivity() {
         screenHeight: Int,
         baseUrl: String,
         modelName: String,
+        modelDisplayName: String,
         apiKey: String,
         provider: com.mobileagent.phoneagent.model.ModelProvider,
         temperature: Float,
@@ -816,6 +889,7 @@ class MainActivity : AppCompatActivity() {
         phoneAgent = PhoneAgent(
             context = this,
             modelClient = modelClient,
+            modelDisplayName = modelDisplayName,
             accessibilityService = accessibilityService,
             mediaProjection = mediaProjectionForAgent,
             screenWidth = screenWidth,
@@ -840,6 +914,7 @@ class MainActivity : AppCompatActivity() {
             runOnUiThread {
                 phoneAgent?.stop()
                 phoneAgent = null
+                renderMainUiState()
                 stopTaskForegroundService()
             }
         }
@@ -903,7 +978,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun updateRuntimeStatus(statusUpdate: RuntimeStatusUpdate, task: String) {
         runOnUiThread {
-            binding.tvStatus.text = statusUpdate.status
+            setMainStatus(statusUpdate.status, statusUpdate.detail)
         }
         FloatingOverlayService.update(
             context = this,
@@ -973,6 +1048,82 @@ class MainActivity : AppCompatActivity() {
         currentStepCount = 0
     }
 
+    private fun renderTaskHistory() {
+        binding.llTaskHistory.removeAllViews()
+        val history = traceStore.loadRecentHistory(limit = 5)
+        if (history.isEmpty()) {
+            binding.llTaskHistory.addView(
+                TextView(this).apply {
+                    text = "暂无历史任务"
+                    textSize = 12f
+                    setTextColor(ContextCompat.getColor(this@MainActivity, android.R.color.darker_gray))
+                }
+            )
+            return
+        }
+
+        history.forEach { entry ->
+            binding.llTaskHistory.addView(createTaskHistoryView(entry))
+        }
+    }
+
+    private fun createTaskHistoryView(entry: TaskHistoryEntry): TextView {
+        return TextView(this).apply {
+            text = buildTaskHistoryText(entry)
+            textSize = 12f
+            setLineSpacing(2f, 1f)
+            setPadding(dp(12), dp(10), dp(12), dp(10))
+            setBackgroundColor(ContextCompat.getColor(this@MainActivity, R.color.main_surface_variant))
+            isClickable = true
+            setOnClickListener {
+                binding.etTask.setText(entry.taskGoal)
+                Toast.makeText(this@MainActivity, "已填入历史任务", Toast.LENGTH_SHORT).show()
+            }
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                bottomMargin = dp(8)
+            }
+        }
+    }
+
+    private fun dp(value: Int): Int {
+        return (value * resources.displayMetrics.density).toInt()
+    }
+
+    private fun buildTaskHistoryText(entry: TaskHistoryEntry): String {
+        val outcome = entry.outcomeMessage?.take(80) ?: "运行中"
+        return "${formatHistoryTime(entry.startedAt)} · ${formatHistoryStatus(entry.status)} · ${entry.mode}\n" +
+            "模型：${formatHistoryModel(entry)}\n" +
+            "${entry.taskGoal}\n" +
+            "$outcome · 步骤 ${entry.totalSteps} · trace ${entry.traceSessionId.take(8)}"
+    }
+
+    private fun formatHistoryTime(timestamp: Long): String {
+        return SimpleDateFormat("MM-dd HH:mm", Locale.getDefault()).format(Date(timestamp))
+    }
+
+    private fun formatHistoryStatus(status: TaskHistoryStatus): String {
+        return when (status) {
+            TaskHistoryStatus.RUNNING -> "运行中"
+            TaskHistoryStatus.SUCCEEDED -> "成功"
+            TaskHistoryStatus.FAILED -> "失败"
+            TaskHistoryStatus.STOPPED -> "已停止"
+        }
+    }
+
+    private fun formatHistoryModel(entry: TaskHistoryEntry): String {
+        val displayName = entry.modelDisplayName.orEmpty().ifBlank { entry.modelProvider.orEmpty() }
+        val modelName = entry.modelName.orEmpty()
+        return when {
+            displayName.isBlank() && modelName.isBlank() -> "未记录"
+            displayName.isBlank() -> modelName
+            modelName.isBlank() || displayName == modelName -> displayName
+            else -> "$displayName · $modelName"
+        }
+    }
+
     private fun appendLog(text: String) {
         binding.tvLog.append("$text\n")
         // 自动滚动到底部
@@ -990,9 +1141,16 @@ class MainActivity : AppCompatActivity() {
         
         // 获取当前日期
         val calendar = java.util.Calendar.getInstance()
-        val weekdayNames = arrayOf("星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日")
-        val weekdayIndex = (calendar.get(java.util.Calendar.DAY_OF_WEEK) + 5) % 7
-        val weekday = weekdayNames[weekdayIndex]
+        val weekday = when (calendar.get(java.util.Calendar.DAY_OF_WEEK)) {
+            java.util.Calendar.MONDAY -> "星期一"
+            java.util.Calendar.TUESDAY -> "星期二"
+            java.util.Calendar.WEDNESDAY -> "星期三"
+            java.util.Calendar.THURSDAY -> "星期四"
+            java.util.Calendar.FRIDAY -> "星期五"
+            java.util.Calendar.SATURDAY -> "星期六"
+            java.util.Calendar.SUNDAY -> "星期日"
+            else -> ""
+        }
         val formattedDate = "${calendar.get(java.util.Calendar.YEAR)}年${calendar.get(java.util.Calendar.MONTH) + 1}月${calendar.get(java.util.Calendar.DAY_OF_MONTH)}日 $weekday"
         
         // 获取当前选择的模式

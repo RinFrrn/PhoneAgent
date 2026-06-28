@@ -25,10 +25,40 @@ data class SessionTrace(
     val taskId: String,
     val taskGoal: String,
     val mode: String,
+    val modelProvider: String? = null,
+    val modelDisplayName: String? = null,
+    val modelName: String? = null,
+    val modelBaseUrl: String? = null,
     val startedAt: Long,
     val completedAt: Long? = null,
     val success: Boolean? = null,
     val outcomeMessage: String? = null,
     val totalSteps: Int = 0,
     val steps: List<StepTrace> = emptyList()
+)
+
+enum class TaskHistoryStatus {
+    RUNNING,
+    SUCCEEDED,
+    FAILED,
+    STOPPED
+}
+
+data class TaskHistoryEntry(
+    val sessionId: String,
+    val taskId: String,
+    val taskGoal: String,
+    val mode: String,
+    val modelProvider: String? = null,
+    val modelDisplayName: String? = null,
+    val modelName: String? = null,
+    val modelBaseUrl: String? = null,
+    val startedAt: Long,
+    val completedAt: Long? = null,
+    val status: TaskHistoryStatus,
+    val success: Boolean? = null,
+    val outcomeMessage: String? = null,
+    val totalSteps: Int = 0,
+    val failureType: FailureType? = null,
+    val traceSessionId: String = sessionId
 )

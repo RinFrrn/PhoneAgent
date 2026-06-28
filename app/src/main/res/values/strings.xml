@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Phone Agent</string>
+    <string name="settings_title">模型设置</string>
     <string name="accessibility_service_description">Phone Agent 需要无障碍服务权限来模拟用户操作，包括点击、输入、滑动等操作。</string>
 </resources>
-

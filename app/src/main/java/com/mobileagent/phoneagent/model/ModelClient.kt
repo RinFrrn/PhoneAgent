@@ -24,10 +24,10 @@ import java.util.concurrent.TimeUnit
  * 支持多个AI服务商，兼容不同的输入输出格式
  */
 class ModelClient(
-    private val baseUrl: String,
-    private val modelName: String,
+    val baseUrl: String,
+    val modelName: String,
     private val apiKey: String = "ollama",
-    private val provider: ModelProvider = ModelProvider.OLLAMA,
+    val provider: ModelProvider = ModelProvider.OLLAMA,
     private val temperature: Float = 0.1f,
     private val topP: Float = 0.85f
 ) {
@@ -397,4 +397,3 @@ data class ModelResponse(
     val action: String,
     val rawContent: String
 )
-

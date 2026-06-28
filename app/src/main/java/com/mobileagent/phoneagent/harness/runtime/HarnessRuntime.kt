@@ -3,6 +3,7 @@ package com.mobileagent.phoneagent.harness.runtime
 import android.content.Context
 import android.util.Log
 import com.mobileagent.phoneagent.action.ActionResult
+import com.mobileagent.phoneagent.agent.AgentRuntimeState
 import com.mobileagent.phoneagent.agent.AgentSessionCoordinator
 import com.mobileagent.phoneagent.agent.AgentStateMachine
 import com.mobileagent.phoneagent.agent.FailureTracker
@@ -19,6 +20,7 @@ import com.mobileagent.phoneagent.harness.recover.DefaultRecoveryPolicy
 import com.mobileagent.phoneagent.harness.recover.FailureType
 import com.mobileagent.phoneagent.harness.spec.TaskSpec
 import com.mobileagent.phoneagent.harness.trace.StepTrace
+import com.mobileagent.phoneagent.harness.trace.TaskHistoryStatus
 import com.mobileagent.phoneagent.harness.trace.TraceStore
 import com.mobileagent.phoneagent.harness.verify.StepVerifier
 import com.mobileagent.phoneagent.harness.verify.VerificationResult
@@ -60,7 +62,11 @@ class HarnessRuntime(
         val traceSessionId = traceStore.openSession(
             taskId = taskSpec.id,
             taskGoal = taskSpec.goal,
-            mode = taskSpec.mode
+            mode = taskSpec.mode,
+            modelProvider = taskSpec.modelProvider,
+            modelDisplayName = taskSpec.modelDisplayName,
+            modelName = taskSpec.modelName,
+            modelBaseUrl = taskSpec.modelBaseUrl
         )
 
         try {
@@ -106,7 +112,12 @@ class HarnessRuntime(
                     onStepRecord?.invoke(record)
                     stateMachine.markFailed()
                     val message = observation.failureMessage
-                    traceStore.closeSession(traceSessionId, success = false, outcomeMessage = message)
+                    traceStore.closeSession(
+                        traceSessionId,
+                        status = TaskHistoryStatus.FAILED,
+                        outcomeMessage = message,
+                        failureType = failureClassifier.classifyObservationFailure(observation.failureMessage)
+                    )
                     onComplete(TaskOutcome(false, message, traceSessionId))
                     return
                 }
@@ -149,7 +160,12 @@ class HarnessRuntime(
                     )
                     onStepRecord?.invoke(record)
                     stateMachine.markFailed()
-                    traceStore.closeSession(traceSessionId, success = false, outcomeMessage = message)
+                    traceStore.closeSession(
+                        traceSessionId,
+                        status = TaskHistoryStatus.FAILED,
+                        outcomeMessage = message,
+                        failureType = failureClassifier.classifyModelFailure(message)
+                    )
                     onComplete(TaskOutcome(false, message, traceSessionId))
                     return
                 }
@@ -258,7 +274,11 @@ class HarnessRuntime(
                 if (execution.shouldFinish || decision.finishRequested) {
                     stateMachine.markCompleted()
                     val message = effectiveExecution.message ?: "任务完成"
-                    traceStore.closeSession(traceSessionId, success = true, outcomeMessage = message)
+                    traceStore.closeSession(
+                        traceSessionId,
+                        status = TaskHistoryStatus.SUCCEEDED,
+                        outcomeMessage = message
+                    )
                     onComplete(TaskOutcome(true, message, traceSessionId))
                     return
                 }
@@ -267,7 +287,14 @@ class HarnessRuntime(
             }
 
             if (!stateMachine.isActive()) {
-                traceStore.closeSession(traceSessionId, success = false, outcomeMessage = "任务被停止")
+                val stoppedByUser = stateMachine.currentState() == AgentRuntimeState.STOPPED
+                val message = if (stoppedByUser) "任务被停止" else "任务失败"
+                traceStore.closeSession(
+                    traceSessionId,
+                    status = if (stoppedByUser) TaskHistoryStatus.STOPPED else TaskHistoryStatus.FAILED,
+                    outcomeMessage = message,
+                    failureType = if (stoppedByUser) FailureType.TASK_STOPPED else FailureType.UNKNOWN
+                )
                 return
             }
 
@@ -278,10 +305,20 @@ class HarnessRuntime(
                 observation = Observation(currentApp = taskSpec.goal, contentItems = emptyList()),
                 execution = null
             ).userMessage ?: "达到最大步数仍未完成"
-            traceStore.closeSession(traceSessionId, success = false, outcomeMessage = message)
+            traceStore.closeSession(
+                traceSessionId,
+                status = TaskHistoryStatus.FAILED,
+                outcomeMessage = message,
+                failureType = FailureType.MAX_STEPS_EXCEEDED
+            )
             onComplete(TaskOutcome(false, message, traceSessionId))
         } catch (e: Exception) {
-            traceStore.closeSession(traceSessionId, success = false, outcomeMessage = "运行时异常: ${e.message}")
+            traceStore.closeSession(
+                traceSessionId,
+                status = TaskHistoryStatus.FAILED,
+                outcomeMessage = "运行时异常: ${e.message}",
+                failureType = FailureType.UNKNOWN
+            )
             throw e
         }
     }

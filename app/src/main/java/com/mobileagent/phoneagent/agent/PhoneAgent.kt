@@ -51,6 +51,7 @@ enum class Mode {
 class PhoneAgent(
     private val context: Context,
     private val modelClient: ModelClient,
+    private val modelDisplayName: String? = null,
     private val accessibilityService: PhoneAgentAccessibilityService,
     private val mediaProjection: MediaProjection?,
     private val screenWidth: Int,
@@ -115,13 +116,18 @@ class PhoneAgent(
                 id = "task-${System.currentTimeMillis()}",
                 goal = task,
                 mode = mode.name,
-                maxSteps = maxSteps
+                maxSteps = maxSteps,
+                modelProvider = modelClient.provider.name,
+                modelDisplayName = modelDisplayName ?: modelClient.provider.displayName,
+                modelName = modelClient.modelName,
+                modelBaseUrl = modelClient.baseUrl
             ),
             onComplete
         )
     }
 
     fun run(taskSpec: TaskSpec, onComplete: (TaskOutcome) -> Unit) {
+        val enrichedTaskSpec = taskSpec.withModelMetadata()
         if (isTaskRunning()) {
             Log.w(TAG, "⚠️ Agent 已在运行中，忽略重复请求")
             return
@@ -129,14 +135,14 @@ class PhoneAgent(
 
         Log.d(TAG, "========================================")
         Log.d(TAG, "🚀 开始执行任务")
-        Log.d(TAG, "任务: ${taskSpec.goal}")
+        Log.d(TAG, "任务: ${enrichedTaskSpec.goal}")
         Log.d(TAG, "屏幕尺寸: ${screenWidth}x${screenHeight}")
         Log.d(TAG, "========================================")
 
         stateMachine.start()
         sessionMemory.clear()
         failureTracker.reset()
-        currentTask = taskSpec.goal
+        currentTask = enrichedTaskSpec.goal
 
         scope.launch {
             try {
@@ -176,7 +182,7 @@ class PhoneAgent(
                 Log.d(TAG, "系统提示词已添加")
 
                 harnessRuntime.run(
-                    taskSpec = taskSpec,
+                    taskSpec = enrichedTaskSpec,
                     screenWidth = screenWidth,
                     screenHeight = screenHeight,
                     onStatusUpdate = onRuntimeStatusCallback,
@@ -201,6 +207,15 @@ class PhoneAgent(
                 Log.d(TAG, "✅ 资源已清理")
             }
         }
+    }
+
+    private fun TaskSpec.withModelMetadata(): TaskSpec {
+        return copy(
+            modelProvider = modelProvider ?: modelClient.provider.name,
+            modelDisplayName = modelDisplayName ?: this@PhoneAgent.modelDisplayName ?: modelClient.provider.displayName,
+            modelName = modelName ?: modelClient.modelName,
+            modelBaseUrl = modelBaseUrl ?: modelClient.baseUrl
+        )
     }
 
     /**

@@ -7,6 +7,7 @@
     <color name="teal_700">#FF018786</color>
     <color name="black">#FF000000</color>
     <color name="white">#FFFFFFFF</color>
+    <color name="main_surface_variant">#FFF5F7FA</color>
+    <color name="main_card_stroke">#FFE0E3EB</color>
     <color name="ic_launcher_background">#FF6200EE</color>
 </resources>
-

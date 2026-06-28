@@ -16,12 +16,20 @@ import android.view.View
 import android.widget.ArrayAdapter
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import com.google.gson.Gson
+import com.google.gson.reflect.TypeToken
 import com.mobileagent.phoneagent.databinding.ActivitySettingsBinding
+import com.mobileagent.phoneagent.model.ModelConfig
 import com.mobileagent.phoneagent.model.ModelProvider
 
 class SettingsActivity : AppCompatActivity() {
     private lateinit var binding: ActivitySettingsBinding
     private lateinit var prefs: SharedPreferences
+    private lateinit var configAdapter: ArrayAdapter<String>
+    private val modelConfigs = mutableListOf<ModelConfig>()
+    private var selectedConfigId: String? = null
+    private var suppressConfigSelection = false
+    private var suppressProviderSelection = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -30,11 +38,34 @@ class SettingsActivity : AppCompatActivity() {
 
         prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
 
+        setupActionBar()
         setupViews()
         loadSettings()
     }
 
+    private fun setupActionBar() {
+        supportActionBar?.apply {
+            title = getString(R.string.settings_title)
+            setDisplayHomeAsUpEnabled(true)
+        }
+    }
+
     private fun setupViews() {
+        configAdapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, mutableListOf<String>())
+        configAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+        binding.spinnerModelConfig.adapter = configAdapter
+        binding.spinnerModelConfig.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: android.widget.AdapterView<*>?, view: View?, position: Int, id: Long) {
+                if (suppressConfigSelection || position !in modelConfigs.indices) return
+                val config = modelConfigs[position]
+                selectedConfigId = config.id
+                saveActiveConfigId(config.id)
+                loadConfigIntoFields(config)
+            }
+
+            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
+        }
+
         // 设置AI厂商下拉列表
         val providers = ModelProvider.values().map { it.displayName }.toTypedArray()
         val adapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, providers)
@@ -44,19 +75,29 @@ class SettingsActivity : AppCompatActivity() {
         // 监听服务商选择变化，更新默认值和API Key显示
         binding.spinnerProvider.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
             override fun onItemSelected(parent: android.widget.AdapterView<*>?, view: View?, position: Int, id: Long) {
+                if (suppressProviderSelection) return
                 val selectedProvider = ModelProvider.values()[position]
                 updateProviderSettings(selectedProvider)
             }
             override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
         }
 
+        binding.btnNewConfig.setOnClickListener {
+            createNewConfigDraft()
+        }
+
+        binding.btnDeleteConfig.setOnClickListener {
+            deleteSelectedConfig()
+        }
+
         binding.btnSave.setOnClickListener {
             saveSettings()
         }
+    }
 
-        binding.btnBack.setOnClickListener {
-            finish()
-        }
+    override fun onSupportNavigateUp(): Boolean {
+        finish()
+        return true
     }
 
     private fun updateProviderSettings(provider: ModelProvider) {
@@ -84,33 +125,17 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     private fun loadSettings() {
-        val providerName = prefs.getString(KEY_PROVIDER, ModelProvider.OLLAMA.name) ?: ModelProvider.OLLAMA.name
-        val provider = ModelProvider.fromString(providerName)
-        val baseUrl = prefs.getString(KEY_BASE_URL, provider.defaultBaseUrl) ?: provider.defaultBaseUrl
-        val modelName = prefs.getString(KEY_MODEL_NAME, provider.defaultModelName) ?: provider.defaultModelName
-        val apiKey = prefs.getString(KEY_API_KEY, "") ?: ""
-        val temperature = prefs.getFloat(KEY_TEMPERATURE, DEFAULT_TEMPERATURE)
-        val topP = prefs.getFloat(KEY_TOP_P, DEFAULT_TOP_P)
-
-        // 设置选中的厂商
-        val position = ModelProvider.values().indexOf(provider)
-        if (position >= 0) {
-            binding.spinnerProvider.setSelection(position)
-        }
-
-        binding.etBaseUrl.setText(baseUrl)
-        binding.etModelName.setText(modelName)
-        binding.etApiKey.setText(apiKey)
-        binding.etTemperature.setText(temperature.toString())
-        binding.etTopP.setText(topP.toString())
-        
-        // 更新API Key显示状态
-        updateProviderSettings(provider)
+        modelConfigs.clear()
+        modelConfigs.addAll(getModelConfigs(this))
+        selectedConfigId = getActiveModelConfig(this).id
+        renderConfigSpinner()
+        loadConfigIntoFields(getActiveModelConfig(this))
     }
 
     private fun saveSettings() {
         val providerName = ModelProvider.values()[binding.spinnerProvider.selectedItemPosition].name
         val provider = ModelProvider.fromString(providerName)
+        val configName = binding.etConfigName.text.toString().trim()
         val baseUrl = binding.etBaseUrl.text.toString().trim()
         val modelName = binding.etModelName.text.toString().trim()
         val apiKey = binding.etApiKey.text.toString().trim()
@@ -142,6 +167,30 @@ class SettingsActivity : AppCompatActivity() {
             DEFAULT_TOP_P
         }
 
+        val now = System.currentTimeMillis()
+        val existing = modelConfigs.find { it.id == selectedConfigId }
+        val config = ModelConfig(
+            id = existing?.id ?: "model_$now",
+            name = configName.ifBlank { "$modelName (${provider.displayName})" },
+            providerName = providerName,
+            baseUrl = baseUrl,
+            modelName = modelName,
+            apiKey = apiKey,
+            temperature = temperature,
+            topP = topP,
+            createdAt = existing?.createdAt ?: now,
+            updatedAt = now
+        )
+
+        val index = modelConfigs.indexOfFirst { it.id == config.id }
+        if (index >= 0) {
+            modelConfigs[index] = config
+        } else {
+            modelConfigs.add(config)
+        }
+        selectedConfigId = config.id
+        saveModelConfigs(modelConfigs, config.id)
+
         prefs.edit().apply {
             putString(KEY_PROVIDER, providerName)
             putString(KEY_BASE_URL, baseUrl)
@@ -152,8 +201,97 @@ class SettingsActivity : AppCompatActivity() {
             apply()
         }
 
-        Toast.makeText(this, "设置已保存", Toast.LENGTH_SHORT).show()
+        Toast.makeText(this, "模型配置已保存并启用", Toast.LENGTH_SHORT).show()
         finish()
+    }
+
+    private fun renderConfigSpinner() {
+        suppressConfigSelection = true
+        configAdapter.clear()
+        configAdapter.addAll(modelConfigs.map { it.displayName })
+        configAdapter.notifyDataSetChanged()
+
+        val selectedIndex = modelConfigs.indexOfFirst { it.id == selectedConfigId }.takeIf { it >= 0 } ?: 0
+        if (modelConfigs.isNotEmpty()) {
+            binding.spinnerModelConfig.setSelection(selectedIndex, false)
+        }
+        suppressConfigSelection = false
+    }
+
+    private fun loadConfigIntoFields(config: ModelConfig) {
+        val provider = config.provider
+        val position = ModelProvider.values().indexOf(provider)
+        suppressProviderSelection = true
+        if (position >= 0) {
+            binding.spinnerProvider.setSelection(position)
+        }
+        suppressProviderSelection = false
+
+        binding.etConfigName.setText(config.displayName)
+        binding.etBaseUrl.setText(config.baseUrl)
+        binding.etModelName.setText(config.modelName)
+        binding.etApiKey.setText(config.apiKey)
+        binding.etTemperature.setText(config.temperature.toString())
+        binding.etTopP.setText(config.topP.toString())
+        updateProviderSettings(provider)
+    }
+
+    private fun createNewConfigDraft() {
+        selectedConfigId = null
+        val provider = ModelProvider.OLLAMA
+        suppressProviderSelection = true
+        binding.spinnerProvider.setSelection(ModelProvider.values().indexOf(provider))
+        suppressProviderSelection = false
+        binding.etConfigName.setText("")
+        binding.etBaseUrl.setText(provider.defaultBaseUrl)
+        binding.etModelName.setText(provider.defaultModelName)
+        binding.etApiKey.setText("")
+        binding.etTemperature.setText(DEFAULT_TEMPERATURE.toString())
+        binding.etTopP.setText(DEFAULT_TOP_P.toString())
+        updateProviderSettings(provider)
+        Toast.makeText(this, "已创建新模型草稿，保存后生效", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun deleteSelectedConfig() {
+        val configId = selectedConfigId ?: return
+        if (modelConfigs.size <= 1) {
+            modelConfigs.clear()
+            modelConfigs.add(ModelConfig.default())
+        } else {
+            modelConfigs.removeAll { it.id == configId }
+        }
+
+        val activeConfig = modelConfigs.first()
+        selectedConfigId = activeConfig.id
+        saveModelConfigs(modelConfigs, activeConfig.id)
+        writeLegacySettings(activeConfig)
+        renderConfigSpinner()
+        loadConfigIntoFields(activeConfig)
+        Toast.makeText(this, "已删除模型配置", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun saveActiveConfigId(configId: String) {
+        prefs.edit().putString(KEY_ACTIVE_MODEL_CONFIG_ID, configId).apply()
+    }
+
+    private fun saveModelConfigs(configs: List<ModelConfig>, activeConfigId: String) {
+        prefs.edit().apply {
+            putString(KEY_MODEL_CONFIGS, gson.toJson(configs))
+            putString(KEY_ACTIVE_MODEL_CONFIG_ID, activeConfigId)
+            apply()
+        }
+    }
+
+    private fun writeLegacySettings(config: ModelConfig) {
+        prefs.edit().apply {
+            putString(KEY_PROVIDER, config.providerName)
+            putString(KEY_BASE_URL, config.baseUrl)
+            putString(KEY_MODEL_NAME, config.modelName)
+            putString(KEY_API_KEY, config.apiKey)
+            putFloat(KEY_TEMPERATURE, config.temperature)
+            putFloat(KEY_TOP_P, config.topP)
+            apply()
+        }
     }
 
     companion object {
@@ -164,41 +302,86 @@ class SettingsActivity : AppCompatActivity() {
         private const val KEY_API_KEY = "api_key"
         private const val KEY_TEMPERATURE = "temperature"
         private const val KEY_TOP_P = "top_p"
+        private const val KEY_MODEL_CONFIGS = "model_configs"
+        private const val KEY_ACTIVE_MODEL_CONFIG_ID = "active_model_config_id"
         
         private const val DEFAULT_TEMPERATURE = 0.1f
         private const val DEFAULT_TOP_P = 0.85f
+        private val gson = Gson()
+
+        fun getModelConfigs(context: android.content.Context): List<ModelConfig> {
+            val prefs = context.getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+            val stored = prefs.getString(KEY_MODEL_CONFIGS, null)
+            val parsed = if (!stored.isNullOrBlank()) {
+                runCatching {
+                    val type = object : TypeToken<List<ModelConfig>>() {}.type
+                    gson.fromJson<List<ModelConfig>>(stored, type)
+                }.getOrNull().orEmpty()
+            } else {
+                emptyList()
+            }
+
+            val configs = parsed.ifEmpty { listOf(readLegacyConfig(prefs)) }
+            val activeId = prefs.getString(KEY_ACTIVE_MODEL_CONFIG_ID, null)
+            if (stored.isNullOrBlank() || configs.none { it.id == activeId }) {
+                val activeConfigId = activeId?.takeIf { id -> configs.any { it.id == id } } ?: configs.first().id
+                prefs.edit().apply {
+                    putString(KEY_MODEL_CONFIGS, gson.toJson(configs))
+                    putString(KEY_ACTIVE_MODEL_CONFIG_ID, activeConfigId)
+                    apply()
+                }
+            }
+            return configs
+        }
+
+        fun getActiveModelConfig(context: android.content.Context): ModelConfig {
+            val prefs = context.getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+            val configs = getModelConfigs(context)
+            val activeId = prefs.getString(KEY_ACTIVE_MODEL_CONFIG_ID, null)
+            return configs.find { it.id == activeId } ?: configs.firstOrNull() ?: ModelConfig.default()
+        }
         
         fun getProvider(context: android.content.Context): ModelProvider {
-            val prefs = context.getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-            val providerName = prefs.getString(KEY_PROVIDER, ModelProvider.OLLAMA.name) ?: ModelProvider.OLLAMA.name
-            return ModelProvider.fromString(providerName)
+            return getActiveModelConfig(context).provider
         }
 
         fun getBaseUrl(context: android.content.Context): String {
-            val prefs = context.getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-            val provider = getProvider(context)
-            return prefs.getString(KEY_BASE_URL, provider.defaultBaseUrl) ?: provider.defaultBaseUrl
+            return getActiveModelConfig(context).baseUrl
         }
 
         fun getModelName(context: android.content.Context): String {
-            val prefs = context.getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-            val provider = getProvider(context)
-            return prefs.getString(KEY_MODEL_NAME, provider.defaultModelName) ?: provider.defaultModelName
+            return getActiveModelConfig(context).modelName
         }
 
         fun getApiKey(context: android.content.Context): String {
-            val prefs = context.getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-            return prefs.getString(KEY_API_KEY, "") ?: ""
+            return getActiveModelConfig(context).apiKey
         }
 
         fun getTemperature(context: android.content.Context): Float {
-            val prefs = context.getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-            return prefs.getFloat(KEY_TEMPERATURE, DEFAULT_TEMPERATURE)
+            return getActiveModelConfig(context).temperature
         }
 
         fun getTopP(context: android.content.Context): Float {
-            val prefs = context.getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-            return prefs.getFloat(KEY_TOP_P, DEFAULT_TOP_P)
+            return getActiveModelConfig(context).topP
+        }
+
+        private fun readLegacyConfig(prefs: SharedPreferences): ModelConfig {
+            val providerName = prefs.getString(KEY_PROVIDER, ModelProvider.OLLAMA.name) ?: ModelProvider.OLLAMA.name
+            val provider = ModelProvider.fromString(providerName)
+            val modelName = prefs.getString(KEY_MODEL_NAME, provider.defaultModelName) ?: provider.defaultModelName
+            val now = System.currentTimeMillis()
+            return ModelConfig(
+                id = "model_$now",
+                name = modelName.ifBlank { provider.defaultModelName.ifBlank { provider.displayName } },
+                providerName = provider.name,
+                baseUrl = prefs.getString(KEY_BASE_URL, provider.defaultBaseUrl) ?: provider.defaultBaseUrl,
+                modelName = modelName,
+                apiKey = prefs.getString(KEY_API_KEY, "") ?: "",
+                temperature = prefs.getFloat(KEY_TEMPERATURE, DEFAULT_TEMPERATURE),
+                topP = prefs.getFloat(KEY_TOP_P, DEFAULT_TOP_P),
+                createdAt = now,
+                updatedAt = now
+            )
         }
     }
 }
