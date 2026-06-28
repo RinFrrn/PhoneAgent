@@ -12,6 +12,7 @@
 package com.mobileagent.phoneagent.action
 
 import android.util.Log
+import com.mobileagent.phoneagent.service.FloatingOverlayService
 import com.mobileagent.phoneagent.service.PhoneAgentAccessibilityService
 import com.mobileagent.phoneagent.utils.AppLauncher
 import kotlinx.coroutines.CompletableDeferred
@@ -105,30 +106,41 @@ class ActionHandler(
                 val x = absoluteX.toFloat()
                 val y = absoluteY.toFloat()
                 Log.d(TAG, "👆 点击操作: 相对坐标(${action.x}, ${action.y}) -> 绝对坐标($x, $y)")
+                FloatingOverlayService.showTapMarker(
+                    context = accessibilityService.applicationContext,
+                    x = x,
+                    y = y,
+                    label = "${action.x},${action.y} -> ${absoluteX},${absoluteY}"
+                )
+                FloatingOverlayService.suppressStatusOverlay(accessibilityService.applicationContext)
                 
-                // 使用协程的 CompletableDeferred 来等待异步回调
-                val deferred = CompletableDeferred<Boolean>()
-                
-                accessibilityService.tap(x, y) { result ->
-                    Log.d(TAG, "点击回调结果: $result")
-                    if (!deferred.isCompleted) {
-                        deferred.complete(result)
+                var success: Boolean
+                try {
+                    // 使用协程的 CompletableDeferred 来等待异步回调
+                    val deferred = CompletableDeferred<Boolean>()
+
+                    accessibilityService.tap(x, y) { result ->
+                        Log.d(TAG, "点击回调结果: $result")
+                        if (!deferred.isCompleted) {
+                            deferred.complete(result)
+                        }
                     }
-                }
-                
-                // 等待点击完成，最多等待 1 秒（因为手势本身只有 100ms，加上回调超时保护 300ms）
-                val success = try {
-                    withTimeout(1000) {
-                        deferred.await()
+
+                    // 等待点击完成，最多等待 1 秒（因为手势本身只有 100ms，加上回调超时保护 300ms）
+                    success = try {
+                        withTimeout(1000) {
+                            deferred.await()
+                        }
+                    } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+                        Log.e(TAG, "❌ 点击操作超时: ($x, $y) - 这不应该发生，因为手势调度成功")
+                        // 如果超时，但手势已调度，假设成功
+                        true
                     }
-                } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
-                    Log.e(TAG, "❌ 点击操作超时: ($x, $y) - 这不应该发生，因为手势调度成功")
-                    // 如果超时，但手势已调度，假设成功
-                    true
+                    // 额外等待一小段时间，确保操作生效
+                    delay(300)
+                } finally {
+                    FloatingOverlayService.restoreStatusOverlay(accessibilityService.applicationContext)
                 }
-                
-                // 额外等待一小段时间，确保操作生效
-                delay(300)
                 
                 Log.d(TAG, "点击操作完成: success=$success")
                 ActionResult(

@@ -3,10 +3,15 @@ package com.mobileagent.phoneagent.service
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
 import android.graphics.PixelFormat
 import android.net.Uri
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.provider.Settings
 import android.view.Gravity
 import android.view.LayoutInflater
@@ -24,6 +29,9 @@ class FloatingOverlayService : Service() {
         private const val ACTION_SHOW = "com.mobileagent.phoneagent.overlay.SHOW"
         private const val ACTION_UPDATE = "com.mobileagent.phoneagent.overlay.UPDATE"
         private const val ACTION_HIDE = "com.mobileagent.phoneagent.overlay.HIDE"
+        private const val ACTION_SHOW_TAP_MARKER = "com.mobileagent.phoneagent.overlay.SHOW_TAP_MARKER"
+        private const val ACTION_SUPPRESS_STATUS = "com.mobileagent.phoneagent.overlay.SUPPRESS_STATUS"
+        private const val ACTION_RESTORE_STATUS = "com.mobileagent.phoneagent.overlay.RESTORE_STATUS"
 
         private const val EXTRA_STATUS = "status"
         private const val EXTRA_DETAIL = "detail"
@@ -31,6 +39,9 @@ class FloatingOverlayService : Service() {
         private const val EXTRA_INTERACTION_REQUIRED = "interaction_required"
         private const val EXTRA_LAUNCH_REQUEST_ID = "launch_request_id"
         private const val EXTRA_LAUNCH_APP_LABEL = "launch_app_label"
+        private const val EXTRA_TAP_X = "tap_x"
+        private const val EXTRA_TAP_Y = "tap_y"
+        private const val EXTRA_TAP_LABEL = "tap_label"
 
         fun canDraw(context: Context): Boolean = Settings.canDrawOverlays(context)
 
@@ -107,15 +118,46 @@ class FloatingOverlayService : Service() {
             }
             context.startService(intent)
         }
+
+        fun showTapMarker(context: Context, x: Float, y: Float, label: String) {
+            if (!canDraw(context)) return
+            val intent = Intent(context, FloatingOverlayService::class.java).apply {
+                action = ACTION_SHOW_TAP_MARKER
+                putExtra(EXTRA_TAP_X, x)
+                putExtra(EXTRA_TAP_Y, y)
+                putExtra(EXTRA_TAP_LABEL, label)
+            }
+            context.startService(intent)
+        }
+
+        fun suppressStatusOverlay(context: Context) {
+            if (!canDraw(context)) return
+            val intent = Intent(context, FloatingOverlayService::class.java).apply {
+                action = ACTION_SUPPRESS_STATUS
+            }
+            context.startService(intent)
+        }
+
+        fun restoreStatusOverlay(context: Context) {
+            if (!canDraw(context)) return
+            val intent = Intent(context, FloatingOverlayService::class.java).apply {
+                action = ACTION_RESTORE_STATUS
+            }
+            context.startService(intent)
+        }
     }
 
     private var windowManager: WindowManager? = null
     private var overlayView: View? = null
+    private var tapMarkerView: View? = null
     private var statusText: TextView? = null
     private var detailText: TextView? = null
     private var taskText: TextView? = null
     private var confirmButton: Button? = null
     private var currentLaunchRequestId: String? = null
+    private var lastOverlayState: OverlayState? = null
+    private var statusSuppressed = false
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     override fun onCreate() {
         super.onCreate()
@@ -129,8 +171,7 @@ class FloatingOverlayService : Service() {
                     stopSelf()
                     return START_NOT_STICKY
                 }
-                ensureOverlay()
-                updateOverlay(
+                val state = OverlayState(
                     status = intent.getStringExtra(EXTRA_STATUS) ?: "等待中",
                     detail = intent.getStringExtra(EXTRA_DETAIL) ?: "",
                     task = intent.getStringExtra(EXTRA_TASK)
@@ -139,10 +180,51 @@ class FloatingOverlayService : Service() {
                     launchRequestId = intent.getStringExtra(EXTRA_LAUNCH_REQUEST_ID),
                     launchAppLabel = intent.getStringExtra(EXTRA_LAUNCH_APP_LABEL)
                 )
+                lastOverlayState = state
+                if (statusSuppressed) {
+                    return START_STICKY
+                }
+                ensureOverlay()
+                updateOverlay(
+                    status = state.status,
+                    detail = state.detail,
+                    task = state.task,
+                    interactionRequired = state.interactionRequired,
+                    launchRequestId = state.launchRequestId,
+                    launchAppLabel = state.launchAppLabel
+                )
             }
             ACTION_HIDE -> {
+                statusSuppressed = false
                 removeOverlay()
                 stopSelf()
+            }
+            ACTION_SHOW_TAP_MARKER -> {
+                if (!canDraw(this)) {
+                    return START_NOT_STICKY
+                }
+                showTapMarker(
+                    x = intent.getFloatExtra(EXTRA_TAP_X, 0f),
+                    y = intent.getFloatExtra(EXTRA_TAP_Y, 0f),
+                    label = intent.getStringExtra(EXTRA_TAP_LABEL) ?: ""
+                )
+            }
+            ACTION_SUPPRESS_STATUS -> {
+                statusSuppressed = true
+                removeStatusOverlayOnly()
+            }
+            ACTION_RESTORE_STATUS -> {
+                statusSuppressed = false
+                val state = lastOverlayState ?: return START_STICKY
+                ensureOverlay()
+                updateOverlay(
+                    status = state.status,
+                    detail = state.detail,
+                    task = state.task,
+                    interactionRequired = state.interactionRequired,
+                    launchRequestId = state.launchRequestId,
+                    launchAppLabel = state.launchAppLabel
+                )
             }
         }
         return START_STICKY
@@ -232,6 +314,11 @@ class FloatingOverlayService : Service() {
     }
 
     private fun removeOverlay() {
+        removeStatusOverlayOnly()
+        removeTapMarker()
+    }
+
+    private fun removeStatusOverlayOnly() {
         overlayView?.let { view ->
             windowManager?.removeView(view)
         }
@@ -241,5 +328,83 @@ class FloatingOverlayService : Service() {
         taskText = null
         confirmButton = null
         currentLaunchRequestId = null
+    }
+
+    private fun showTapMarker(x: Float, y: Float, label: String) {
+        removeTapMarker()
+        val sizePx = (resources.displayMetrics.density * 96).toInt().coerceAtLeast(96)
+        val marker = TapMarkerView(this, label)
+        val params = WindowManager.LayoutParams(
+            sizePx,
+            sizePx,
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+            } else {
+                WindowManager.LayoutParams.TYPE_PHONE
+            },
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+            this.x = (x - sizePx / 2f).toInt()
+            this.y = (y - sizePx / 2f).toInt()
+        }
+        tapMarkerView = marker
+        windowManager?.addView(marker, params)
+        mainHandler.postDelayed({ removeTapMarker() }, 1_200L)
+    }
+
+    private fun removeTapMarker() {
+        tapMarkerView?.let { marker ->
+            runCatching { windowManager?.removeView(marker) }
+        }
+        tapMarkerView = null
+    }
+
+    private data class OverlayState(
+        val status: String,
+        val detail: String,
+        val task: String,
+        val interactionRequired: Boolean,
+        val launchRequestId: String?,
+        val launchAppLabel: String?
+    )
+
+    private class TapMarkerView(
+        context: Context,
+        private val label: String
+    ) : View(context) {
+        private val density = resources.displayMetrics.density
+        private val ringPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.argb(230, 255, 64, 64)
+            style = Paint.Style.STROKE
+            strokeWidth = 3f * density
+        }
+        private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.argb(70, 255, 64, 64)
+            style = Paint.Style.FILL
+        }
+        private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.WHITE
+            textSize = 11f * density
+            textAlign = Paint.Align.CENTER
+            setShadowLayer(3f * density, 0f, 1f * density, Color.BLACK)
+        }
+
+        override fun onDraw(canvas: Canvas) {
+            super.onDraw(canvas)
+            val cx = width / 2f
+            val cy = height / 2f
+            val radius = minOf(width, height) * 0.22f
+            canvas.drawCircle(cx, cy, radius * 1.8f, fillPaint)
+            canvas.drawCircle(cx, cy, radius, ringPaint)
+            canvas.drawLine(cx - radius * 1.6f, cy, cx + radius * 1.6f, cy, ringPaint)
+            canvas.drawLine(cx, cy - radius * 1.6f, cx, cy + radius * 1.6f, ringPaint)
+            if (label.isNotBlank()) {
+                canvas.drawText(label, cx, cy + radius * 2.4f, textPaint)
+            }
+        }
     }
 }
