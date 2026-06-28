@@ -35,6 +35,8 @@ class FloatingOverlayService : Service() {
         private const val EXTRA_STATUS = "status"
         private const val EXTRA_DETAIL = "detail"
         private const val EXTRA_TASK = "task"
+        private const val EXTRA_ACTIVITY_STATUS = "activity_status"
+        private const val EXTRA_ACTIVITY_ANIMATING = "activity_animating"
         private const val EXTRA_INTERACTION_REQUIRED = "interaction_required"
         private const val EXTRA_LAUNCH_REQUEST_ID = "launch_request_id"
         private const val EXTRA_LAUNCH_APP_LABEL = "launch_app_label"
@@ -59,7 +61,9 @@ class FloatingOverlayService : Service() {
             status: String,
             detail: String,
             task: String,
-            interactionRequired: Boolean = false
+            interactionRequired: Boolean = false,
+            activityStatus: String? = null,
+            activityAnimating: Boolean = false
         ) {
             if (!canDraw(context)) return
             val intent = Intent(context, FloatingOverlayService::class.java).apply {
@@ -68,6 +72,8 @@ class FloatingOverlayService : Service() {
                 putExtra(EXTRA_DETAIL, detail)
                 putExtra(EXTRA_TASK, task)
                 putExtra(EXTRA_INTERACTION_REQUIRED, interactionRequired)
+                putExtra(EXTRA_ACTIVITY_STATUS, activityStatus)
+                putExtra(EXTRA_ACTIVITY_ANIMATING, activityAnimating)
             }
             context.startService(intent)
         }
@@ -77,7 +83,9 @@ class FloatingOverlayService : Service() {
             status: String,
             detail: String,
             task: String,
-            interactionRequired: Boolean = false
+            interactionRequired: Boolean = false,
+            activityStatus: String? = null,
+            activityAnimating: Boolean = false
         ) {
             if (!canDraw(context)) return
             val intent = Intent(context, FloatingOverlayService::class.java).apply {
@@ -86,6 +94,8 @@ class FloatingOverlayService : Service() {
                 putExtra(EXTRA_DETAIL, detail)
                 putExtra(EXTRA_TASK, task)
                 putExtra(EXTRA_INTERACTION_REQUIRED, interactionRequired)
+                putExtra(EXTRA_ACTIVITY_STATUS, activityStatus)
+                putExtra(EXTRA_ACTIVITY_ANIMATING, activityAnimating)
             }
             context.startService(intent)
         }
@@ -150,6 +160,7 @@ class FloatingOverlayService : Service() {
     private var overlayView: View? = null
     private var tapMarkerView: View? = null
     private var statusText: TextView? = null
+    private var activityText: TextView? = null
     private var detailText: TextView? = null
     private var taskText: TextView? = null
     private var confirmButton: Button? = null
@@ -157,6 +168,17 @@ class FloatingOverlayService : Service() {
     private var lastOverlayState: OverlayState? = null
     private var statusSuppressed = false
     private val mainHandler = Handler(Looper.getMainLooper())
+    private var activityBaseStatus: String? = null
+    private var activityAnimating = false
+    private var activityDotCount = 0
+    private val activityAnimationRunnable = object : Runnable {
+        override fun run() {
+            if (!activityAnimating) return
+            activityDotCount = (activityDotCount % 3) + 1
+            activityText?.text = "${activityBaseStatus.orEmpty()}${".".repeat(activityDotCount)}"
+            mainHandler.postDelayed(this, 500L)
+        }
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -176,6 +198,8 @@ class FloatingOverlayService : Service() {
                     task = intent.getStringExtra(EXTRA_TASK)
                         ?: (AgentSessionCoordinator.currentTask() ?: "未设置任务"),
                     interactionRequired = intent.getBooleanExtra(EXTRA_INTERACTION_REQUIRED, false),
+                    activityStatus = intent.getStringExtra(EXTRA_ACTIVITY_STATUS),
+                    activityAnimating = intent.getBooleanExtra(EXTRA_ACTIVITY_ANIMATING, false),
                     launchRequestId = intent.getStringExtra(EXTRA_LAUNCH_REQUEST_ID),
                     launchAppLabel = intent.getStringExtra(EXTRA_LAUNCH_APP_LABEL)
                 )
@@ -189,6 +213,8 @@ class FloatingOverlayService : Service() {
                     detail = state.detail,
                     task = state.task,
                     interactionRequired = state.interactionRequired,
+                    activityStatus = state.activityStatus,
+                    activityAnimating = state.activityAnimating,
                     launchRequestId = state.launchRequestId,
                     launchAppLabel = state.launchAppLabel
                 )
@@ -221,6 +247,8 @@ class FloatingOverlayService : Service() {
                     detail = state.detail,
                     task = state.task,
                     interactionRequired = state.interactionRequired,
+                    activityStatus = state.activityStatus,
+                    activityAnimating = state.activityAnimating,
                     launchRequestId = state.launchRequestId,
                     launchAppLabel = state.launchAppLabel
                 )
@@ -257,6 +285,7 @@ class FloatingOverlayService : Service() {
 
         val view = LayoutInflater.from(this).inflate(R.layout.overlay_agent_status, null)
         statusText = view.findViewById(R.id.tvOverlayStatus)
+        activityText = view.findViewById(R.id.tvOverlayActivity)
         detailText = view.findViewById(R.id.tvOverlayDetail)
         taskText = view.findViewById(R.id.tvOverlayTask)
         confirmButton = view.findViewById<Button?>(R.id.btnOverlayConfirm).apply {
@@ -285,6 +314,8 @@ class FloatingOverlayService : Service() {
         detail: String,
         task: String,
         interactionRequired: Boolean,
+        activityStatus: String?,
+        activityAnimating: Boolean,
         launchRequestId: String?,
         launchAppLabel: String?
     ) {
@@ -292,12 +323,49 @@ class FloatingOverlayService : Service() {
         statusText?.text = status
         detailText?.text = detail
         taskText?.text = task
+        updateActivityIndicator(activityStatus, activityAnimating, interactionRequired)
         confirmButton?.text = if (launchRequestId != null) {
             "打开${launchAppLabel ?: "应用"}"
         } else {
             "已处理"
         }
         confirmButton?.visibility = if (interactionRequired) View.VISIBLE else View.GONE
+    }
+
+    private fun updateActivityIndicator(
+        activityStatus: String?,
+        shouldAnimate: Boolean,
+        interactionRequired: Boolean
+    ) {
+        val visibleStatus = activityStatus?.takeUnless { it.isBlank() }
+        if (interactionRequired || visibleStatus == null) {
+            stopActivityAnimation()
+            activityText?.visibility = View.GONE
+            activityText?.text = ""
+            return
+        }
+
+        activityText?.visibility = View.VISIBLE
+        activityBaseStatus = visibleStatus
+        if (shouldAnimate) {
+            startActivityAnimation()
+        } else {
+            stopActivityAnimation()
+            activityText?.text = visibleStatus
+        }
+    }
+
+    private fun startActivityAnimation() {
+        if (activityAnimating) return
+        activityAnimating = true
+        activityDotCount = 0
+        mainHandler.removeCallbacks(activityAnimationRunnable)
+        mainHandler.post(activityAnimationRunnable)
+    }
+
+    private fun stopActivityAnimation() {
+        activityAnimating = false
+        mainHandler.removeCallbacks(activityAnimationRunnable)
     }
 
     private fun removeOverlay() {
@@ -311,10 +379,12 @@ class FloatingOverlayService : Service() {
         }
         overlayView = null
         statusText = null
+        activityText = null
         detailText = null
         taskText = null
         confirmButton = null
         currentLaunchRequestId = null
+        stopActivityAnimation()
     }
 
     private fun showTapMarker(x: Float, y: Float, label: String) {
@@ -358,6 +428,8 @@ class FloatingOverlayService : Service() {
         val detail: String,
         val task: String,
         val interactionRequired: Boolean,
+        val activityStatus: String?,
+        val activityAnimating: Boolean,
         val launchRequestId: String?,
         val launchAppLabel: String?
     )

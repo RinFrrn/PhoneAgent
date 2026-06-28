@@ -18,6 +18,11 @@ data class ModelConfig(
     val displayName: String
         get() = name.ifBlank { "${provider.displayName} · $modelName" }
 
+    val isConfigured: Boolean
+        get() = baseUrl.isNotBlank() &&
+            modelName.isNotBlank() &&
+            (!provider.requiresApiKey || apiKey.isNotBlank())
+
     companion object {
         fun default(now: Long = System.currentTimeMillis()): ModelConfig {
             val provider = ModelProvider.OLLAMA

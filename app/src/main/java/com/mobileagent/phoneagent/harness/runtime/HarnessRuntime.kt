@@ -31,9 +31,17 @@ import com.mobileagent.phoneagent.skill.SkillRegistry
 import com.mobileagent.phoneagent.skill.SkillExecutionAdvisor
 import kotlinx.coroutines.delay
 
+enum class RuntimePhase {
+    OBSERVING,
+    MODEL_GENERATING,
+    EXECUTING,
+    VERIFYING
+}
+
 data class RuntimeStatusUpdate(
     val status: String,
-    val detail: String
+    val detail: String,
+    val phase: RuntimePhase
 )
 
 class HarnessRuntime(
@@ -90,7 +98,8 @@ class HarnessRuntime(
                 onStatusUpdate?.invoke(
                     RuntimeStatusUpdate(
                         status = "观察页面中",
-                        detail = "正在读取当前页面状态"
+                        detail = "正在读取当前页面状态",
+                        phase = RuntimePhase.OBSERVING
                     )
                 )
                 val observation = observationCollector.collect()
@@ -137,7 +146,8 @@ class HarnessRuntime(
                 onStatusUpdate?.invoke(
                     RuntimeStatusUpdate(
                         status = "AI 生成中",
-                        detail = "正在分析当前页面并生成下一步操作"
+                        detail = "正在分析当前页面并生成下一步操作",
+                        phase = RuntimePhase.MODEL_GENERATING
                     )
                 )
                 val decision = try {
@@ -183,7 +193,8 @@ class HarnessRuntime(
                 onStatusUpdate?.invoke(
                     RuntimeStatusUpdate(
                         status = "执行操作中",
-                        detail = "正在执行模型返回的操作"
+                        detail = "正在执行模型返回的操作",
+                        phase = RuntimePhase.EXECUTING
                     )
                 )
                 val execution = actionExecutor.execute(
@@ -199,7 +210,8 @@ class HarnessRuntime(
                 onStatusUpdate?.invoke(
                     RuntimeStatusUpdate(
                         status = "验证结果中",
-                        detail = "正在检查操作是否生效"
+                        detail = "正在检查操作是否生效",
+                        phase = RuntimePhase.VERIFYING
                     )
                 )
                 val afterObservation = collectPostExecutionObservation(execution)

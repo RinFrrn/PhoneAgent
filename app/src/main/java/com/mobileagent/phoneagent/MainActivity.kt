@@ -30,6 +30,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
+import com.google.android.material.button.MaterialButton
 import com.mobileagent.phoneagent.agent.AgentSessionCoordinator
 import com.mobileagent.phoneagent.agent.Mode
 import com.mobileagent.phoneagent.agent.PhoneAgent
@@ -39,6 +40,7 @@ import com.mobileagent.phoneagent.harness.eval.ActiveEvalRunner
 import com.mobileagent.phoneagent.harness.eval.ActiveEvalReport
 import com.mobileagent.phoneagent.harness.eval.EvalCase
 import com.mobileagent.phoneagent.harness.eval.EvalRunner
+import com.mobileagent.phoneagent.harness.runtime.RuntimePhase
 import com.mobileagent.phoneagent.harness.runtime.RuntimeStatusUpdate
 import com.mobileagent.phoneagent.harness.spec.TaskSpec
 import com.mobileagent.phoneagent.harness.trace.FileTraceStore
@@ -68,6 +70,8 @@ class MainActivity : AppCompatActivity() {
     private var mainStatusDetail: String? = null
     private var isTaskActive = false
     private var isAdvancedExpanded = false
+    private var recentOverlayStatus = "等待任务"
+    private var recentOverlayDetail = "等待第一个执行结果"
     private val traceStore by lazy { FileTraceStore(this) }
 
     companion object {
@@ -78,10 +82,20 @@ class MainActivity : AppCompatActivity() {
         private const val REQUEST_CODE_AUDIO = 104
         private const val REQUEST_CODE_OVERLAY = 105
         private const val ACCESSIBILITY_CONNECT_TIMEOUT_MS = 30_000L
+        private const val EXAMPLE_TASK_COUNT = 3
     }
     
     private var isVoiceInputActive = false
     private var voiceActivityDetector: com.mobileagent.phoneagent.utils.VoiceActivityDetector? = null
+    private var currentExampleTasks: List<String> = emptyList()
+    private val exampleTaskPool = listOf(
+        "打开微信",
+        "打开小红书并搜索咖啡",
+        "打开淘宝并搜索手机支架",
+        "打开美团并搜索附近咖啡",
+        "打开抖音并搜索今日热点",
+        "打开系统设置查看 Wi-Fi 状态"
+    )
 
     override fun onStart() {
         super.onStart()
@@ -133,6 +147,17 @@ class MainActivity : AppCompatActivity() {
             startVoiceInput()
         }
 
+        binding.btnRefreshExampleTasks.setOnClickListener {
+            refreshExampleTasks()
+        }
+
+        exampleTaskButtons().forEach { button ->
+            button.setOnClickListener {
+                val task = button.tag as? String ?: return@setOnClickListener
+                startExampleTask(task)
+            }
+        }
+
         binding.btnAccessibilityPermission.setOnClickListener {
             openAccessibilitySettings()
         }
@@ -157,6 +182,8 @@ class MainActivity : AppCompatActivity() {
             isAdvancedExpanded = !isAdvancedExpanded
             renderMainUiState()
         }
+
+        refreshExampleTasks()
     }
 
     private fun checkPermissions() {
@@ -228,6 +255,7 @@ class MainActivity : AppCompatActivity() {
         } else {
             "模型：${modelConfig.displayName} · ${modelConfig.provider.displayName} · $modelName"
         }
+        renderExampleTasks(modelConfig.isConfigured, running)
 
         val defaultStatus = when {
             running -> "任务执行中"
@@ -254,6 +282,56 @@ class MainActivity : AppCompatActivity() {
         binding.advancedContent.visibility = if (showAdvanced) View.VISIBLE else View.GONE
         binding.btnAdvancedToggle.text = if (showAdvanced) "收起高级工具" else "高级工具"
         renderTaskHistory()
+    }
+
+    private fun refreshExampleTasks() {
+        currentExampleTasks = exampleTaskPool.shuffled().take(EXAMPLE_TASK_COUNT)
+        val running = isTaskActive || phoneAgent?.isTaskRunning() == true || evalJob != null
+        val modelConfigured = SettingsActivity.getActiveModelConfig(this).isConfigured
+        renderExampleTasks(modelConfigured, running)
+    }
+
+    private fun renderExampleTasks(modelConfigured: Boolean, running: Boolean) {
+        binding.sectionExampleTasks.visibility = if (modelConfigured) View.VISIBLE else View.GONE
+        if (!modelConfigured) {
+            return
+        }
+
+        if (currentExampleTasks.size < EXAMPLE_TASK_COUNT) {
+            currentExampleTasks = exampleTaskPool.shuffled().take(EXAMPLE_TASK_COUNT)
+        }
+
+        exampleTaskButtons().forEachIndexed { index, button ->
+            val task = currentExampleTasks.getOrNull(index)
+            button.visibility = if (task == null) View.GONE else View.VISIBLE
+            button.isEnabled = !running
+            if (task != null) {
+                button.text = task
+                button.tag = task
+            }
+        }
+        binding.btnRefreshExampleTasks.isEnabled = !running
+    }
+
+    private fun exampleTaskButtons(): List<MaterialButton> {
+        return listOf(
+            binding.btnExampleTask1,
+            binding.btnExampleTask2,
+            binding.btnExampleTask3
+        )
+    }
+
+    private fun startExampleTask(task: String) {
+        val running = isTaskActive || phoneAgent?.isTaskRunning() == true || evalJob != null
+        if (running) {
+            Toast.makeText(this, "任务执行中，请稍后再试", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        binding.etTask.setText(task)
+        binding.etTask.setSelection(task.length)
+        binding.tvVoiceStatus.text = ""
+        startTask()
     }
 
     private fun isAccessibilityServiceEnabled(): Boolean {
@@ -640,19 +718,7 @@ class MainActivity : AppCompatActivity() {
                 runOnUiThread {
                     updateStepInfo(stepResult)
                 }
-                val overlayStatus = when {
-                    stepResult.action == "分析中..." -> "AI 分析中"
-                    stepResult.message == "正在执行操作..." -> "执行操作中"
-                    stepResult.finished -> "任务完成"
-                    stepResult.success -> "步骤成功"
-                    else -> "步骤失败"
-                }
-                FloatingOverlayService.update(
-                    context = this,
-                    status = overlayStatus,
-                    detail = stepResult.message ?: stepResult.thinking.take(120),
-                    task = task
-                )
+                updateOverlayResultFromStep(stepResult, task)
                 // 增强通知显示：显示每一步的详细信息
                 val notificationContent = buildNotificationContent(stepResult, currentStepCount)
                 updateNotification(notificationContent)
@@ -665,10 +731,11 @@ class MainActivity : AppCompatActivity() {
             onUserInterventionCallback = { message ->
                 // 显示用户介入通知
                 showUserInterventionNotification(message)
+                setRecentOverlayResult("等待用户处理", message)
                 FloatingOverlayService.update(
                     context = this,
-                    status = "等待用户处理",
-                    detail = message,
+                    status = recentOverlayStatus,
+                    detail = recentOverlayDetail,
                     task = task,
                     interactionRequired = true
                 )
@@ -681,6 +748,7 @@ class MainActivity : AppCompatActivity() {
         setMainStatus("任务执行中", "应用会进入后台继续执行，可通过悬浮窗观察状态。")
         binding.tvLog.text = ""
         resetStepCount()
+        setRecentOverlayResult("任务启动中", "等待第一个执行结果")
 
         AgentSessionCoordinator.register(task) {
             runOnUiThread {
@@ -690,7 +758,7 @@ class MainActivity : AppCompatActivity() {
         FloatingOverlayService.show(
             context = this,
             status = "任务启动中",
-            detail = "正在初始化代理与权限",
+            detail = recentOverlayDetail,
             task = task
         )
 
@@ -833,6 +901,7 @@ class MainActivity : AppCompatActivity() {
         setMainStatus("评测执行中", "正在按默认用例运行回归评测。")
         binding.tvLog.text = ""
         resetStepCount()
+        setRecentOverlayResult("评测启动中", "等待第一个执行结果")
         appendLog("🧪 开始运行评测，共 ${cases.size} 个用例")
 
         evalJob = lifecycleScope.launch {
@@ -890,6 +959,13 @@ class MainActivity : AppCompatActivity() {
         }
 
         startTaskForegroundService(taskSpec.goal, baseUrl, modelName, taskMode)
+        setRecentOverlayResult("评测用例启动中", "等待第一个执行结果")
+        FloatingOverlayService.show(
+            context = this,
+            status = recentOverlayStatus,
+            detail = recentOverlayDetail,
+            task = taskSpec.goal
+        )
         phoneAgent = PhoneAgent(
             context = this,
             modelClient = modelClient,
@@ -905,12 +981,21 @@ class MainActivity : AppCompatActivity() {
                 runOnUiThread {
                     updateStepInfo(stepResult)
                 }
+                updateOverlayResultFromStep(stepResult, taskSpec.goal)
             },
             onRuntimeStatusCallback = { statusUpdate ->
                 updateRuntimeStatus(statusUpdate, taskSpec.goal)
             },
             onUserInterventionCallback = { message ->
                 showUserInterventionNotification(message)
+                setRecentOverlayResult("等待用户处理", message)
+                FloatingOverlayService.update(
+                    context = this,
+                    status = recentOverlayStatus,
+                    detail = recentOverlayDetail,
+                    task = taskSpec.goal,
+                    interactionRequired = true
+                )
             }
         )
 
@@ -984,13 +1069,40 @@ class MainActivity : AppCompatActivity() {
         runOnUiThread {
             setMainStatus(statusUpdate.status, statusUpdate.detail)
         }
+        val isGenerating = statusUpdate.phase == RuntimePhase.MODEL_GENERATING
         FloatingOverlayService.update(
             context = this,
-            status = statusUpdate.status,
-            detail = statusUpdate.detail,
-            task = task
+            status = recentOverlayStatus,
+            detail = recentOverlayDetail,
+            task = task,
+            activityStatus = if (isGenerating) "AI 生成中" else null,
+            activityAnimating = isGenerating
         )
         updateNotification("${statusUpdate.status}: ${statusUpdate.detail}")
+    }
+
+    private fun updateOverlayResultFromStep(
+        stepResult: com.mobileagent.phoneagent.agent.StepResult,
+        task: String
+    ) {
+        val overlayStatus = when {
+            stepResult.finished -> "任务完成"
+            stepResult.success -> "步骤成功"
+            else -> "步骤失败"
+        }
+        val overlayDetail = stepResult.message ?: stepResult.thinking.take(120)
+        setRecentOverlayResult(overlayStatus, overlayDetail)
+        FloatingOverlayService.update(
+            context = this,
+            status = recentOverlayStatus,
+            detail = recentOverlayDetail,
+            task = task
+        )
+    }
+
+    private fun setRecentOverlayResult(status: String, detail: String) {
+        recentOverlayStatus = status
+        recentOverlayDetail = detail.ifBlank { "等待下一步执行结果" }
     }
 
     private fun showUserInterventionNotification(message: String) {

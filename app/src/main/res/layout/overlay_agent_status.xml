@@ -19,6 +19,16 @@
         android:textStyle="bold" />
 
     <TextView
+        android:id="@+id/tvOverlayActivity"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:text="AI 生成中..."
+        android:textColor="#A9D6FF"
+        android:textSize="12sp"
+        android:visibility="gone" />
+
+    <TextView
         android:id="@+id/tvOverlayTask"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
@@ -34,7 +44,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="8dp"
-        android:maxLines="5"
+        android:maxLines="4"
         android:text="详情"
         android:textColor="#F5F7FA"
         android:textSize="12sp" />
