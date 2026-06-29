@@ -11,6 +11,7 @@ import android.util.Log
 import com.google.gson.Gson
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
+import com.mobileagent.phoneagent.utils.LogSanitizer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -185,7 +186,7 @@ class ModelClient(
 
         val requestJson = requestBody.toString()
         Log.d(TAG, "请求体大小: ${requestJson.length} 字符")
-        Log.d(TAG, "最后一条消息预览: ${getLastMessagePreview(messages)}")
+        Log.d(TAG, "最后一条消息预览: ${LogSanitizer.sanitize(getLastMessagePreview(messages))}")
 
         // 检查是否包含 thinking 参数（GLM）
         if (provider == ModelProvider.GLM) {
@@ -200,7 +201,7 @@ class ModelClient(
             }
         }
         
-        Log.d(TAG, "请求 JSON 预览: ${requestJson.take(500)}${if (requestJson.length > 500) "..." else ""}")
+        Log.d(TAG, "请求 JSON 预览: ${LogSanitizer.sanitize(requestJson.take(500))}${if (requestJson.length > 500) "..." else ""}")
 
         // 根据服务商构建请求URL和Headers
         val requestUrl = when (provider) {
@@ -244,19 +245,28 @@ class ModelClient(
 
         Log.d(TAG, "响应状态: ${response.code}")
         Log.d(TAG, "响应时间: ${duration}ms")
-        Log.d(TAG, "响应体: $responseBody")
+        Log.d(TAG, "响应体: ${LogSanitizer.sanitize(responseBody)}")
         Log.d(TAG, "响应体大小: ${responseBody.length} 字符")
 
         if (!response.isSuccessful) {
             Log.e(TAG, "❌ 请求失败: ${response.code}")
-            Log.e(TAG, "错误响应: $responseBody")
-            throw Exception("请求失败: ${response.code} - $responseBody")
+            Log.e(TAG, "错误响应: ${LogSanitizer.sanitize(responseBody)}")
+            throw Exception("请求失败: ${response.code} - ${LogSanitizer.sanitize(responseBody)}")
         }
 
-        val modelResponse = parseResponse(responseBody)
+        val modelResponse = parseResponse(
+            responseBody = responseBody,
+            callStats = ModelCallStats(
+                providerName = provider.name,
+                modelName = modelName,
+                latencyMs = duration,
+                requestChars = requestJson.length,
+                responseChars = responseBody.length
+            )
+        )
         Log.d(TAG, "✅ 模型响应解析成功")
-        Log.d(TAG, "思考过程: ${modelResponse.thinking}")
-        Log.d(TAG, "操作指令: ${modelResponse.action}")
+        Log.d(TAG, "思考过程: ${LogSanitizer.sanitize(modelResponse.thinking)}")
+        Log.d(TAG, "操作指令: ${LogSanitizer.sanitize(modelResponse.action)}")
         Log.d(TAG, "========================================")
         
         modelResponse
@@ -281,7 +291,7 @@ class ModelClient(
     /**
      * 解析模型响应（支持不同服务商的格式）
      */
-    private fun parseResponse(responseBody: String): ModelResponse {
+    private fun parseResponse(responseBody: String, callStats: ModelCallStats): ModelResponse {
         val json = JsonParser.parseString(responseBody).asJsonObject
         val content: String
         val thinking: String
@@ -360,7 +370,8 @@ class ModelClient(
         return ModelResponse(
             thinking = thinking,
             action = action,
-            rawContent = content
+            rawContent = content,
+            callStats = callStats.withUsage(json)
         )
     }
 }
@@ -395,5 +406,64 @@ data class ImageUrl(
 data class ModelResponse(
     val thinking: String,
     val action: String,
-    val rawContent: String
+    val rawContent: String,
+    val callStats: ModelCallStats? = null
 )
+
+data class ModelCallStats(
+    val providerName: String,
+    val modelName: String,
+    val latencyMs: Long,
+    val requestChars: Int,
+    val responseChars: Int,
+    val promptTokens: Int? = null,
+    val completionTokens: Int? = null,
+    val totalTokens: Int? = null
+) {
+    fun summary(): String {
+        val tokenPart = totalTokens?.let { total ->
+            "tokens=$total" +
+                (promptTokens?.let { ", prompt=$it" } ?: "") +
+                (completionTokens?.let { ", completion=$it" } ?: "")
+        } ?: "tokens=unknown"
+        return "provider=$providerName, model=$modelName, latency=${latencyMs}ms, requestChars=$requestChars, responseChars=$responseChars, $tokenPart"
+    }
+
+    internal fun withUsage(json: JsonObject): ModelCallStats {
+        val usage = runCatching { json.getAsJsonObject("usage") }.getOrNull()
+        if (usage != null) {
+            val prompt = usage.optionalInt("prompt_tokens")
+            val completion = usage.optionalInt("completion_tokens")
+            val total = usage.optionalInt("total_tokens") ?: prompt?.let { p ->
+                completion?.let { c -> p + c }
+            }
+            return copy(
+                promptTokens = prompt,
+                completionTokens = completion,
+                totalTokens = total
+            )
+        }
+
+        val googleUsage = runCatching { json.getAsJsonObject("usageMetadata") }.getOrNull()
+        if (googleUsage != null) {
+            val prompt = googleUsage.optionalInt("promptTokenCount")
+            val completion = googleUsage.optionalInt("candidatesTokenCount")
+            val total = googleUsage.optionalInt("totalTokenCount") ?: prompt?.let { p ->
+                completion?.let { c -> p + c }
+            }
+            return copy(
+                promptTokens = prompt,
+                completionTokens = completion,
+                totalTokens = total
+            )
+        }
+
+        return this
+    }
+
+    private fun JsonObject.optionalInt(name: String): Int? {
+        return runCatching {
+            get(name)?.takeIf { !it.isJsonNull }?.asInt
+        }.getOrNull()
+    }
+}

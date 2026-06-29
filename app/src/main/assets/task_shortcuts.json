@@ -1,0 +1,66 @@
+[
+  {
+    "id": "sys_wechat_check",
+    "title": "查看微信消息",
+    "instruction": "打开微信，查看最新的未读消息",
+    "category": "社交",
+    "voiceKeywords": ["查看微信", "看微信", "微信消息"],
+    "isSystem": true
+  },
+  {
+    "id": "sys_douyin_browse",
+    "title": "刷抖音",
+    "instruction": "打开抖音，刷5个视频",
+    "category": "娱乐",
+    "voiceKeywords": ["刷抖音", "看抖音", "抖音"],
+    "isSystem": true
+  },
+  {
+    "id": "sys_alipay_scan",
+    "title": "支付宝扫码",
+    "instruction": "打开支付宝，进入扫一扫",
+    "category": "支付",
+    "voiceKeywords": ["支付宝扫码", "扫一扫", "支付宝"],
+    "isSystem": true
+  },
+  {
+    "id": "sys_taobao_cart",
+    "title": "查看购物车",
+    "instruction": "打开淘宝，进入购物车查看",
+    "category": "购物",
+    "voiceKeywords": ["购物车", "淘宝购物车", "看购物车"],
+    "isSystem": true
+  },
+  {
+    "id": "sys_map_home",
+    "title": "导航回家",
+    "instruction": "打开高德地图，导航到家",
+    "category": "出行",
+    "voiceKeywords": ["导航回家", "回家", "回家导航"],
+    "isSystem": true
+  },
+  {
+    "id": "sys_music_play",
+    "title": "播放音乐",
+    "instruction": "打开网易云音乐，播放我喜欢的音乐",
+    "category": "娱乐",
+    "voiceKeywords": ["播放音乐", "听歌", "放歌"],
+    "isSystem": true
+  },
+  {
+    "id": "sys_settings_wifi",
+    "title": "查看 Wi-Fi",
+    "instruction": "打开系统设置查看 Wi-Fi 状态",
+    "category": "工具",
+    "voiceKeywords": ["查看无线网", "Wi-Fi", "网络状态"],
+    "isSystem": true
+  },
+  {
+    "id": "sys_xiaohongshu_search",
+    "title": "小红书搜索",
+    "instruction": "打开小红书并搜索咖啡",
+    "category": "内容",
+    "voiceKeywords": ["小红书搜索", "搜小红书"],
+    "isSystem": true
+  }
+]

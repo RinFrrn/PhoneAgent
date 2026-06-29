@@ -17,6 +17,7 @@ import com.mobileagent.phoneagent.harness.learn.TracePathSummarizer
 import com.mobileagent.phoneagent.harness.observe.Observation
 import com.mobileagent.phoneagent.harness.observe.ObservationCollector
 import com.mobileagent.phoneagent.harness.plan.Planner
+import com.mobileagent.phoneagent.harness.plan.TaskPreprocessor
 import com.mobileagent.phoneagent.harness.recover.FailureClassifier
 import com.mobileagent.phoneagent.harness.recover.DefaultRecoveryPolicy
 import com.mobileagent.phoneagent.harness.recover.FailureType
@@ -56,7 +57,8 @@ class HarnessRuntime(
     private val stepVerifier: StepVerifier,
     private val traceStore: TraceStore,
     private val failureClassifier: FailureClassifier,
-    private val recoveryPolicy: DefaultRecoveryPolicy
+    private val recoveryPolicy: DefaultRecoveryPolicy,
+    private val taskPreprocessor: TaskPreprocessor = TaskPreprocessor()
 ) {
     private val tag = "HarnessRuntime"
     private val learnedSkillRepository = LearnedSkillRepository(context)
@@ -90,6 +92,7 @@ class HarnessRuntime(
         try {
             while (stateMachine.isActive() && session.stepCount < taskSpec.maxSteps) {
                 val stepIndex = session.nextStepIndex()
+                val stepWarnings = RuntimeStepHealthMonitor.warningsForStep(stepIndex, taskSpec.maxSteps)
                 Log.d(tag, "执行 Harness 步骤: $stepIndex/${taskSpec.maxSteps}")
 
                 failureTracker.consumeReplanPrompt(taskSpec.goal)?.let(sessionMemory::add)
@@ -98,7 +101,7 @@ class HarnessRuntime(
                 onStatusUpdate?.invoke(
                     RuntimeStatusUpdate(
                         status = "观察页面中",
-                        detail = "正在读取当前页面状态",
+                        detail = buildStatusDetail("正在读取当前页面状态", stepWarnings),
                         phase = RuntimePhase.OBSERVING
                     )
                 )
@@ -111,7 +114,8 @@ class HarnessRuntime(
                         execution = null,
                         verification = null,
                         status = StepStatus.OBSERVATION_FAILED,
-                        errorMessage = observation.failureMessage
+                        errorMessage = observation.failureMessage,
+                        runtimeWarnings = stepWarnings
                     )
                     traceStore.appendStep(
                         traceSessionId,
@@ -125,7 +129,8 @@ class HarnessRuntime(
                             observationAfter = null,
                             verification = null,
                             errorMessage = observation.failureMessage,
-                            failureType = failureClassifier.classifyObservationFailure(observation.failureMessage)
+                            failureType = failureClassifier.classifyObservationFailure(observation.failureMessage),
+                            runtimeWarnings = stepWarnings
                         )
                     )
                     onStepRecord?.invoke(record)
@@ -145,13 +150,22 @@ class HarnessRuntime(
 
                 onStatusUpdate?.invoke(
                     RuntimeStatusUpdate(
-                        status = "AI 生成中",
-                        detail = "正在分析当前页面并生成下一步操作",
+                        status = "规划下一步",
+                        detail = "正在判断是否可直接执行，必要时再请求模型",
                         phase = RuntimePhase.MODEL_GENERATING
                     )
                 )
                 val decision = try {
-                    planner.plan(taskSpec, observation, sessionMemory)
+                    val preprocessed = if (stepIndex == 1) {
+                        taskPreprocessor.preprocess(taskSpec.goal)
+                    } else {
+                        null
+                    }
+                    if (preprocessed != null) {
+                        preprocessed.toPlanDecision()
+                    } else {
+                        planner.plan(taskSpec, observation, sessionMemory)
+                    }
                 } catch (e: Exception) {
                     val message = "模型请求失败: ${e.message}"
                     val record = HarnessStepRecord(
@@ -161,7 +175,8 @@ class HarnessRuntime(
                         execution = null,
                         verification = null,
                         status = StepStatus.FAILED,
-                        errorMessage = message
+                        errorMessage = message,
+                        runtimeWarnings = stepWarnings
                     )
                     traceStore.appendStep(
                         traceSessionId,
@@ -175,7 +190,8 @@ class HarnessRuntime(
                             observationAfter = null,
                             verification = null,
                             errorMessage = message,
-                            failureType = failureClassifier.classifyModelFailure(message)
+                            failureType = failureClassifier.classifyModelFailure(message),
+                            runtimeWarnings = stepWarnings
                         )
                     )
                     onStepRecord?.invoke(record)
@@ -193,7 +209,11 @@ class HarnessRuntime(
                 onStatusUpdate?.invoke(
                     RuntimeStatusUpdate(
                         status = "执行操作中",
-                        detail = "正在执行模型返回的操作",
+                        detail = buildStatusDetail(if (decision.skipLlm) {
+                            "正在执行任务预处理生成的直接操作"
+                        } else {
+                            "正在执行规划返回的操作"
+                        }, stepWarnings),
                         phase = RuntimePhase.EXECUTING
                     )
                 )
@@ -288,7 +308,7 @@ class HarnessRuntime(
                 }
 
                 val status = when {
-                    execution.shouldFinish -> StepStatus.FINISHED
+                    execution.shouldFinish || decision.finishRequested -> StepStatus.FINISHED
                     effectiveExecution.success -> StepStatus.EXECUTED
                     else -> StepStatus.FAILED
                 }
@@ -309,7 +329,8 @@ class HarnessRuntime(
                             effectiveExecution.failureType ?: FailureType.UNKNOWN
                         } else {
                             null
-                        }
+                        },
+                        runtimeWarnings = stepWarnings
                     )
                 )
 
@@ -321,7 +342,8 @@ class HarnessRuntime(
                         execution = effectiveExecution,
                         verification = verification,
                         status = status,
-                        errorMessage = if (status == StepStatus.FAILED) effectiveExecution.message else null
+                        errorMessage = if (status == StepStatus.FAILED) effectiveExecution.message else null,
+                        runtimeWarnings = stepWarnings
                     )
                 )
 
@@ -376,6 +398,14 @@ class HarnessRuntime(
             )
             throw e
         }
+    }
+
+    private fun buildStatusDetail(base: String, warnings: List<RuntimeWarning>): String {
+        if (warnings.isEmpty()) {
+            return base
+        }
+        val warningText = warnings.joinToString("；") { it.message }
+        return "$base；$warningText"
     }
 
     private suspend fun collectPostExecutionObservation(execution: ExecutionResult): Observation? {

@@ -59,8 +59,10 @@ object SystemPromptBuilder {
                 Interact是当有多个满足条件的选项时而触发的交互操作，询问用户如何选择。
             - do(action="Swipe", start=[x1,y1], end=[x2,y2], purpose="向上滑动列表，继续查找目标内容")  
                 Swipe是滑动操作。坐标系统从左上角 (0,0) 开始到右下角（999,999)结束。
-            - do(action="Note", message="True")  
-                记录当前页面内容以便后续总结。
+            - do(action="Note", content="xxx", category="price/contact/url/account/other", reason="为什么需要记录")  
+                记录当前页面的重要内容，适合价格、联系人、订单号、链接、账号状态等后续需要引用的信息。
+            - do(action="Note", todos="- [ ] xxx\n- [x] xxx", reason="更新任务进度")  
+                记录或更新复杂任务的 TODO 列表，便于后续总结和 trace 回看。
             - do(action="Call_API", instruction="xxx")  
                 总结或评论当前页面或已记录的内容。
             - do(action="Long Press", element=[x,y])  

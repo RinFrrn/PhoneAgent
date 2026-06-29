@@ -43,19 +43,32 @@ import com.mobileagent.phoneagent.harness.eval.ActiveEvalRunner
 import com.mobileagent.phoneagent.harness.eval.ActiveEvalReport
 import com.mobileagent.phoneagent.harness.eval.EvalCase
 import com.mobileagent.phoneagent.harness.eval.EvalRunner
+import com.mobileagent.phoneagent.harness.eval.RecentTaskHealthAnalyzer
+import com.mobileagent.phoneagent.harness.eval.RecentTaskHealthReport
 import com.mobileagent.phoneagent.harness.runtime.RuntimePhase
 import com.mobileagent.phoneagent.harness.runtime.RuntimeStatusUpdate
+import com.mobileagent.phoneagent.harness.runtime.RuntimeDiagnosticSnapshot
+import com.mobileagent.phoneagent.harness.runtime.RuntimeDiagnosticSnapshotBuilder
+import com.mobileagent.phoneagent.harness.runtime.RuntimeDeviceSnapshotReader
+import com.mobileagent.phoneagent.harness.runtime.RunReadinessChecker
 import com.mobileagent.phoneagent.harness.runtime.SystemPromptBuilder
 import com.mobileagent.phoneagent.harness.runtime.TaskRunController
+import com.mobileagent.phoneagent.harness.act.ExecutionHumanizationSettings
 import com.mobileagent.phoneagent.harness.spec.TaskSpec
 import com.mobileagent.phoneagent.harness.trace.FileTraceStore
+import com.mobileagent.phoneagent.harness.trace.RecentTaskPerformanceSummary
+import com.mobileagent.phoneagent.harness.trace.RecentTaskPerformanceSummaryBuilder
+import com.mobileagent.phoneagent.harness.trace.SessionTrace
 import com.mobileagent.phoneagent.harness.trace.TaskHistoryEntry
 import com.mobileagent.phoneagent.harness.trace.TaskHistoryStatus
 import com.mobileagent.phoneagent.model.ModelClient
 import com.mobileagent.phoneagent.service.AgentForegroundService
 import com.mobileagent.phoneagent.service.FloatingOverlayService
 import com.mobileagent.phoneagent.service.PhoneAgentAccessibilityService
+import com.mobileagent.phoneagent.shortcut.TaskShortcut
+import com.mobileagent.phoneagent.shortcut.TaskShortcutRepository
 import com.mobileagent.phoneagent.utils.ActivityVisibilityTracker
+import com.mobileagent.phoneagent.utils.LogSanitizer
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -97,20 +110,14 @@ class MainActivity : AppCompatActivity() {
     
     private var isVoiceInputActive = false
     private var voiceActivityDetector: com.mobileagent.phoneagent.utils.VoiceActivityDetector? = null
-    private var currentExampleTasks: List<String> = emptyList()
+    private var currentExampleTasks: List<TaskShortcut> = emptyList()
+    private val taskShortcutRepository by lazy { TaskShortcutRepository(this) }
+    private var shortcutRefreshOffset = 0
     private val logLines = ArrayDeque<String>()
     private var logTextLength = 0
     private var isLogAutoScrollEnabled = true
     private var isLogTouching = false
     private var isLogScrollToBottomPending = false
-    private val exampleTaskPool = listOf(
-        "打开微信",
-        "打开小红书并搜索咖啡",
-        "打开淘宝并搜索手机支架",
-        "打开美团并搜索附近咖啡",
-        "打开抖音并搜索今日热点",
-        "打开系统设置查看 Wi-Fi 状态"
-    )
 
     override fun onStart() {
         super.onStart()
@@ -179,8 +186,13 @@ class MainActivity : AppCompatActivity() {
 
         exampleTaskButtons().forEach { button ->
             button.setOnClickListener {
-                val task = button.tag as? String ?: return@setOnClickListener
-                startExampleTask(task)
+                val shortcut = button.tag as? TaskShortcut ?: return@setOnClickListener
+                fillShortcutTask(shortcut)
+            }
+            button.setOnLongClickListener {
+                val shortcut = button.tag as? TaskShortcut ?: return@setOnLongClickListener false
+                startShortcutTask(shortcut)
+                true
             }
         }
 
@@ -276,6 +288,9 @@ class MainActivity : AppCompatActivity() {
         val overlayEnabled = Settings.canDrawOverlays(this)
         val selectedMode = getSelectedMode()
         val visualMode = selectedMode != Mode.ACCESSIBILITY
+        val notificationEnabled = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) ==
+            PackageManager.PERMISSION_GRANTED
         val running = isTaskActive ||
             phoneAgent?.isTaskRunning() == true ||
             TaskRunController.isRunning() ||
@@ -306,30 +321,54 @@ class MainActivity : AppCompatActivity() {
         }
 
         val modelConfig = SettingsActivity.getActiveModelConfig(this)
+        val humanizationProfile = ExecutionHumanizationSettings.readProfile(
+            getSharedPreferences(ExecutionHumanizationSettings.PREFS_NAME, MODE_PRIVATE)
+        )
+        val readiness = RunReadinessChecker.evaluate(
+            modelConfigured = modelConfig.isConfigured,
+            accessibilityEnabled = accessibilityEnabled,
+            overlayEnabled = overlayEnabled,
+            notificationEnabled = notificationEnabled,
+            mode = selectedMode,
+            screenCaptureReady = !visualMode || mediaProjection != null,
+            humanizationEnabled = humanizationProfile.enabled
+        )
         val modelName = modelConfig.modelName.ifBlank { "未配置模型" }
-        binding.tvModelSummary.text = if (modelConfig.displayName == modelName) {
-            "模型：${modelConfig.provider.displayName} · $modelName"
+        val modelLabel = if (modelConfig.displayName == modelName) {
+            "${modelConfig.provider.displayName} · $modelName"
         } else {
-            "模型：${modelConfig.displayName} · ${modelConfig.provider.displayName} · $modelName"
+            "${modelConfig.displayName} · ${modelConfig.provider.displayName} · $modelName"
         }
+        binding.tvModelSummary.text = "模型：$modelLabel"
         renderExampleTasks(modelConfig.isConfigured, running)
 
-        val defaultStatus = when {
-            running -> "任务执行中"
-            !accessibilityEnabled -> "需要开启无障碍服务"
-            !overlayEnabled -> "需要授权悬浮窗"
-            else -> "已就绪"
-        }
-        val defaultDetail = when {
-            running -> "可以回到手机继续操作，或在这里停止任务。"
-            !accessibilityEnabled -> "点击下方按钮进入系统设置，找到 Phone Agent 并开启。"
-            !overlayEnabled -> "点击下方按钮进入系统设置，允许显示在其他应用上层。"
-            visualMode -> "当前模式会在开始时请求一次屏幕录制权限。"
-            else -> "输入任务描述后即可开始。"
-        }
+        val defaultStatus = readiness.statusTitle(running)
+        val defaultDetail = readiness.statusDetail(running)
 
         binding.tvStatus.text = mainStatusMessage ?: defaultStatus
         binding.tvStatusDetail.text = mainStatusDetail ?: defaultDetail
+        val recentTraceSnapshot = loadRecentTaskTraceSnapshot()
+        val recentPerformanceSummary = RecentTaskPerformanceSummaryBuilder.summarize(
+            history = recentTraceSnapshot.history,
+            sessions = recentTraceSnapshot.sessions
+        )
+        val recentTaskHealthReport = RecentTaskHealthAnalyzer.analyze(recentTraceSnapshot.history)
+        val deviceSnapshot = RuntimeDeviceSnapshotReader.read(this)
+        val diagnosticSnapshot = RuntimeDiagnosticSnapshotBuilder.build(
+            running = running,
+            mode = selectedMode,
+            modelLabel = modelLabel,
+            readiness = readiness,
+            humanizationProfile = humanizationProfile,
+            recentSummary = recentPerformanceSummary,
+            history = recentTraceSnapshot.history,
+            deviceSnapshot = deviceSnapshot
+        )
+        binding.tvRuntimeDiagnosticSummary.text = diagnosticSnapshot.compactText()
+        binding.tvRuntimeDiagnosticSummary.setOnLongClickListener {
+            copyRuntimeDiagnosticToClipboard(diagnosticSnapshot)
+            true
+        }
 
         binding.btnStart.isEnabled = !running
         binding.btnStop.isEnabled = running
@@ -340,11 +379,20 @@ class MainActivity : AppCompatActivity() {
         binding.btnRunEval.isEnabled = !running
 
         binding.advancedContent.visibility = View.VISIBLE
-        renderTaskHistory()
+        renderTaskHistory(recentTraceSnapshot, recentPerformanceSummary, recentTaskHealthReport)
     }
 
     private fun refreshExampleTasks() {
-        currentExampleTasks = exampleTaskPool.shuffled().take(EXAMPLE_TASK_COUNT)
+        val shortcuts = taskShortcutRepository.rankedShortcuts()
+        if (shortcuts.isEmpty()) {
+            currentExampleTasks = emptyList()
+        } else {
+            val start = shortcutRefreshOffset % shortcuts.size
+            currentExampleTasks = (0 until EXAMPLE_TASK_COUNT)
+                .map { index -> shortcuts[(start + index) % shortcuts.size] }
+                .distinctBy { it.id }
+            shortcutRefreshOffset = (shortcutRefreshOffset + EXAMPLE_TASK_COUNT) % shortcuts.size
+        }
         val running = isTaskActive ||
             phoneAgent?.isTaskRunning() == true ||
             TaskRunController.isRunning() ||
@@ -360,16 +408,19 @@ class MainActivity : AppCompatActivity() {
         }
 
         if (currentExampleTasks.size < EXAMPLE_TASK_COUNT) {
-            currentExampleTasks = exampleTaskPool.shuffled().take(EXAMPLE_TASK_COUNT)
+            currentExampleTasks = taskShortcutRepository.rankedShortcuts().take(EXAMPLE_TASK_COUNT)
         }
 
         exampleTaskButtons().forEachIndexed { index, button ->
-            val task = currentExampleTasks.getOrNull(index)
-            button.visibility = if (task == null) View.GONE else View.VISIBLE
+            val shortcut = currentExampleTasks.getOrNull(index)
+            button.visibility = if (shortcut == null) View.GONE else View.VISIBLE
             button.isEnabled = !running
-            if (task != null) {
-                button.text = task
-                button.tag = task
+            if (shortcut != null) {
+                val usage = taskShortcutRepository.usageFor(shortcut.id)
+                val useSuffix = usage?.useCount?.takeIf { it > 0 }?.let { " · $it" }.orEmpty()
+                button.text = "${shortcut.title}$useSuffix"
+                button.contentDescription = "${shortcut.category}: ${shortcut.instruction}"
+                button.tag = shortcut
             }
         }
         binding.btnRefreshExampleTasks.isEnabled = !running
@@ -383,7 +434,15 @@ class MainActivity : AppCompatActivity() {
         )
     }
 
-    private fun startExampleTask(task: String) {
+    private fun fillShortcutTask(shortcut: TaskShortcut) {
+        val task = shortcut.instruction
+        binding.etTask.setText(task)
+        binding.etTask.setSelection(task.length)
+        binding.tvVoiceStatus.text = ""
+        Toast.makeText(this, "已填入：${shortcut.title}", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun startShortcutTask(shortcut: TaskShortcut) {
         val running = isTaskActive ||
             phoneAgent?.isTaskRunning() == true ||
             TaskRunController.isRunning() ||
@@ -393,6 +452,8 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
+        val task = shortcut.instruction
+        taskShortcutRepository.recordUsed(shortcut.id)
         binding.etTask.setText(task)
         binding.etTask.setSelection(task.length)
         binding.tvVoiceStatus.text = ""
@@ -721,6 +782,13 @@ class MainActivity : AppCompatActivity() {
         val task = binding.etTask.text.toString().trim()
         if (task.isEmpty()) {
             Toast.makeText(this, "请输入任务描述", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        val modelConfig = SettingsActivity.getActiveModelConfig(this)
+        if (!modelConfig.isConfigured) {
+            Toast.makeText(this, "请先完成模型配置", Toast.LENGTH_LONG).show()
+            startActivity(Intent(this, SettingsActivity::class.java))
             return
         }
 
@@ -1306,9 +1374,30 @@ class MainActivity : AppCompatActivity() {
         currentStepCount = 0
     }
 
-    private fun renderTaskHistory() {
-        binding.llTaskHistory.removeAllViews()
+    private fun loadRecentTaskTraceSnapshot(): RecentTaskTraceSnapshot {
         val history = traceStore.loadRecentHistory(limit = 5)
+        val sessions = history.mapNotNull { entry ->
+            traceStore.loadSession(entry.traceSessionId)
+        }
+        return RecentTaskTraceSnapshot(history, sessions)
+    }
+
+    private fun renderTaskHistory(
+        snapshot: RecentTaskTraceSnapshot = loadRecentTaskTraceSnapshot(),
+        performanceSummary: RecentTaskPerformanceSummary = RecentTaskPerformanceSummaryBuilder.summarize(
+            history = snapshot.history,
+            sessions = snapshot.sessions
+        ),
+        healthReport: RecentTaskHealthReport = RecentTaskHealthAnalyzer.analyze(snapshot.history)
+    ) {
+        binding.llTaskHistory.removeAllViews()
+        val history = snapshot.history
+        binding.tvRecentPerformanceSummary.text = performanceSummary.toDisplayText()
+        binding.tvRecentTaskHealth.text = healthReport.toDisplayText()
+        binding.tvRecentTaskHealth.setOnLongClickListener {
+            copyRecentTaskHealthToClipboard(healthReport)
+            true
+        }
         if (history.isEmpty()) {
             binding.llTaskHistory.addView(
                 TextView(this).apply {
@@ -1324,6 +1413,11 @@ class MainActivity : AppCompatActivity() {
             binding.llTaskHistory.addView(createTaskHistoryView(entry))
         }
     }
+
+    private data class RecentTaskTraceSnapshot(
+        val history: List<TaskHistoryEntry>,
+        val sessions: List<SessionTrace>
+    )
 
     private fun createTaskHistoryView(entry: TaskHistoryEntry): TextView {
         return TextView(this).apply {
@@ -1431,8 +1525,20 @@ class MainActivity : AppCompatActivity() {
         }
 
         val clipboard = getSystemService(ClipboardManager::class.java)
-        clipboard.setPrimaryClip(ClipData.newPlainText("PhoneAgent 执行日志", logText))
+        clipboard.setPrimaryClip(ClipData.newPlainText("PhoneAgent 执行日志", LogSanitizer.sanitize(logText)))
         Toast.makeText(this, "日志已复制", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun copyRuntimeDiagnosticToClipboard(snapshot: RuntimeDiagnosticSnapshot) {
+        val clipboard = getSystemService(ClipboardManager::class.java)
+        clipboard.setPrimaryClip(ClipData.newPlainText("PhoneAgent 运行诊断", LogSanitizer.sanitize(snapshot.detailText())))
+        Toast.makeText(this, "运行诊断已复制", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun copyRecentTaskHealthToClipboard(report: RecentTaskHealthReport) {
+        val clipboard = getSystemService(ClipboardManager::class.java)
+        clipboard.setPrimaryClip(ClipData.newPlainText("PhoneAgent 任务健康", LogSanitizer.sanitize(report.detailText())))
+        Toast.makeText(this, "任务健康报告已复制", Toast.LENGTH_SHORT).show()
     }
 
     private fun currentLogText(): String {

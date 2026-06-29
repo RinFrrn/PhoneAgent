@@ -1,8 +1,11 @@
 package com.mobileagent.phoneagent
 
 import com.mobileagent.phoneagent.agent.StepResult
+import com.mobileagent.phoneagent.harness.trace.ModelCallSummaryBuilder
 import com.mobileagent.phoneagent.harness.trace.SessionTrace
 import com.mobileagent.phoneagent.harness.trace.StepTrace
+import com.mobileagent.phoneagent.harness.trace.TaskNoteSummaryBuilder
+import com.mobileagent.phoneagent.utils.LogSanitizer
 import org.json.JSONArray
 import org.json.JSONObject
 import java.text.SimpleDateFormat
@@ -26,15 +29,19 @@ object TaskLogFormatter {
             appendLine("──── 步骤 ${step.stepIndex ?: "?"} · ${step.status ?: formatStepStatus(step.success, step.finished)} ────")
             appendLine("本步目的: $purpose")
             step.currentApp?.takeIf { it.isNotBlank() }?.let { appendLine("当前应用: $it") }
+            step.runtimeWarnings.forEach { warning ->
+                appendLine("运行提示: $warning")
+            }
             appendLogSection("模型思考", step.thinking, THINKING_PREVIEW_LENGTH)
             step.rawResponse?.let { appendLogSection("模型输出", it, RAW_RESPONSE_PREVIEW_LENGTH) }
             appendLogSection("提取动作", step.action, ACTION_PREVIEW_LENGTH)
             appendLine("动作说明: ${describeActionPurpose(step.action)}")
             step.message?.let { appendLogSection("执行结果", it, MESSAGE_PREVIEW_LENGTH) }
+            step.taskNote?.let { appendLine("任务笔记: $it") }
             step.verificationSummary?.let { appendLine("验证结果: $it") }
             step.failureType?.let { appendLine("失败类型: $it") }
             appendLine()
-        }.trimEnd()
+        }.trimEnd().let(LogSanitizer::sanitize)
     }
 
     fun formatSession(session: SessionTrace): String {
@@ -46,6 +53,8 @@ object TaskLogFormatter {
             session.completedAt?.let { appendLine("结束: ${formatTime(it)}") }
             appendLine("结果: ${formatOutcome(session.success, session.outcomeMessage)}")
             appendLine("步骤数: ${session.totalSteps}")
+            appendLine(ModelCallSummaryBuilder.summarize(session).toDisplayText())
+            appendLine(TaskNoteSummaryBuilder.summarize(session).toDisplayText())
             appendLine("Trace: ${session.sessionId}")
             appendLine()
             appendLine("========== 输出过程 ==========")
@@ -57,7 +66,7 @@ object TaskLogFormatter {
                     appendLine()
                 }
             }
-        }.trimEnd()
+        }.trimEnd().let(LogSanitizer::sanitize)
     }
 
     fun formatTraceStep(step: StepTrace): String {
@@ -76,22 +85,40 @@ object TaskLogFormatter {
             step.observationBefore.currentPackage?.takeIf { it.isNotBlank() }?.let {
                 appendLine("包名: $it")
             }
+            step.runtimeWarnings.forEach { warning ->
+                appendLine("运行提示: [${warning.severity}] ${warning.message}")
+            }
             step.observationBefore.failureMessage?.takeIf { it.isNotBlank() }?.let {
                 appendLine("观察异常: $it")
             }
             step.decision?.let { decision ->
+                appendLine(
+                    "规划来源: ${decision.source}" +
+                        (decision.executor?.let { ", executor=$it" } ?: "") +
+                        (decision.confidence?.let { ", confidence=$it" } ?: "")
+                )
                 appendLogSection("模型思考", decision.thinking, THINKING_PREVIEW_LENGTH)
                 appendLogSection("模型输出", decision.rawResponse, RAW_RESPONSE_PREVIEW_LENGTH)
+                decision.modelCallStats?.let { stats ->
+                    appendLine("模型统计: ${stats.summary()}")
+                }
                 appendLogSection("提取动作", decision.actionJson, ACTION_PREVIEW_LENGTH)
                 appendLine("动作说明: ${describeActionPurpose(decision.actionJson)}")
             } ?: appendLine("模型输出: 无")
             step.execution?.let { execution ->
                 execution.message?.let { appendLogSection("执行结果", it, MESSAGE_PREVIEW_LENGTH) }
+                execution.taskNote?.let { appendLine("任务笔记: ${it.toDisplayText()}") }
                 appendLine("执行成功: ${if (execution.success) "是" else "否"}")
                 appendLine("请求结束任务: ${if (execution.shouldFinish) "是" else "否"}")
                 execution.failureType?.let { appendLine("失败类型: $it") }
                 execution.launchTrace?.let { trace ->
                     appendLine("启动链路: app=${trace.targetAppName}, package=${trace.targetPackage ?: "未解析"}, status=${trace.status}")
+                }
+                execution.humanizationTrace?.let { trace ->
+                    appendLine(
+                        "执行人性化: enabled=${trace.enabled}, level=${trace.level}, delayMs=${trace.delayMs}, " +
+                            "positionRandomized=${trace.positionRandomized}, reason=${trace.reason}"
+                    )
                 }
             } ?: appendLine("执行结果: 未执行")
             step.verification?.let { verification ->
@@ -104,7 +131,7 @@ object TaskLogFormatter {
             }
             step.errorMessage?.let { appendLine("错误: $it") }
             step.failureType?.let { appendLine("失败类型: $it") }
-        }.trimEnd()
+        }.trimEnd().let(LogSanitizer::sanitize)
     }
 
     fun summarizeStepPurpose(

@@ -19,6 +19,9 @@ import androidx.appcompat.app.AppCompatActivity
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import com.mobileagent.phoneagent.databinding.ActivitySettingsBinding
+import com.mobileagent.phoneagent.harness.act.ExecutionHumanizationLevel
+import com.mobileagent.phoneagent.harness.act.ExecutionHumanizationProfile
+import com.mobileagent.phoneagent.harness.act.ExecutionHumanizationSettings
 import com.mobileagent.phoneagent.model.ModelConfig
 import com.mobileagent.phoneagent.model.ModelProvider
 
@@ -26,10 +29,16 @@ class SettingsActivity : AppCompatActivity() {
     private lateinit var binding: ActivitySettingsBinding
     private lateinit var prefs: SharedPreferences
     private lateinit var configAdapter: ArrayAdapter<String>
+    private lateinit var humanizationLevelAdapter: ArrayAdapter<String>
     private val modelConfigs = mutableListOf<ModelConfig>()
     private var selectedConfigId: String? = null
     private var suppressConfigSelection = false
     private var suppressProviderSelection = false
+    private val humanizationLevels = listOf(
+        ExecutionHumanizationLevel.LOW,
+        ExecutionHumanizationLevel.MEDIUM,
+        ExecutionHumanizationLevel.HIGH
+    )
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -82,6 +91,21 @@ class SettingsActivity : AppCompatActivity() {
             override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
         }
 
+        humanizationLevelAdapter = ArrayAdapter(
+            this,
+            android.R.layout.simple_spinner_item,
+            humanizationLevels.map(::humanizationLevelLabel)
+        )
+        humanizationLevelAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+        binding.spinnerHumanizationLevel.adapter = humanizationLevelAdapter
+
+        binding.switchExecutionHumanization.setOnCheckedChangeListener { _, _ ->
+            updateHumanizationControlsEnabled()
+        }
+        binding.switchHumanizationPositionRandom.setOnCheckedChangeListener { _, _ ->
+            updateHumanizationControlsEnabled()
+        }
+
         binding.btnNewConfig.setOnClickListener {
             createNewConfigDraft()
         }
@@ -130,6 +154,7 @@ class SettingsActivity : AppCompatActivity() {
         selectedConfigId = getActiveModelConfig(this).id
         renderConfigSpinner()
         loadConfigIntoFields(getActiveModelConfig(this))
+        loadHumanizationSettings()
     }
 
     private fun saveSettings() {
@@ -200,6 +225,7 @@ class SettingsActivity : AppCompatActivity() {
             putFloat(KEY_TOP_P, topP)
             apply()
         }
+        saveHumanizationSettings()
 
         Toast.makeText(this, "模型配置已保存并启用", Toast.LENGTH_SHORT).show()
         finish()
@@ -268,6 +294,54 @@ class SettingsActivity : AppCompatActivity() {
         renderConfigSpinner()
         loadConfigIntoFields(activeConfig)
         Toast.makeText(this, "已删除模型配置", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun loadHumanizationSettings() {
+        val profile = ExecutionHumanizationSettings.readProfile(prefs)
+        binding.switchExecutionHumanization.isChecked = profile.enabled
+        binding.switchHumanizationTimeRandom.isChecked = profile.timeRandomEnabled
+        binding.switchHumanizationPositionRandom.isChecked = profile.positionRandomEnabled
+        val levelIndex = humanizationLevels.indexOf(profile.level).takeIf { it >= 0 } ?: 0
+        binding.spinnerHumanizationLevel.setSelection(levelIndex)
+        binding.etHumanizationOffsetPercent.setText(
+            ExecutionHumanizationSettings.offsetFractionToPercentText(profile.positionOffsetPercentage)
+        )
+        updateHumanizationControlsEnabled()
+    }
+
+    private fun saveHumanizationSettings() {
+        val level = humanizationLevels.getOrElse(binding.spinnerHumanizationLevel.selectedItemPosition) {
+            ExecutionHumanizationLevel.LOW
+        }
+        ExecutionHumanizationSettings.writeProfile(
+            prefs,
+            ExecutionHumanizationProfile(
+                enabled = binding.switchExecutionHumanization.isChecked,
+                level = level,
+                timeRandomEnabled = binding.switchHumanizationTimeRandom.isChecked,
+                positionRandomEnabled = binding.switchHumanizationPositionRandom.isChecked,
+                positionOffsetPercentage = ExecutionHumanizationSettings.offsetPercentToFraction(
+                    binding.etHumanizationOffsetPercent.text?.toString().orEmpty()
+                )
+            )
+        )
+    }
+
+    private fun updateHumanizationControlsEnabled() {
+        val enabled = binding.switchExecutionHumanization.isChecked
+        binding.spinnerHumanizationLevel.isEnabled = enabled
+        binding.switchHumanizationTimeRandom.isEnabled = enabled
+        binding.switchHumanizationPositionRandom.isEnabled = enabled
+        binding.layoutHumanizationOffset.isEnabled = enabled && binding.switchHumanizationPositionRandom.isChecked
+        binding.etHumanizationOffsetPercent.isEnabled = binding.layoutHumanizationOffset.isEnabled
+    }
+
+    private fun humanizationLevelLabel(level: ExecutionHumanizationLevel): String {
+        return when (level) {
+            ExecutionHumanizationLevel.LOW -> "低：200-500ms"
+            ExecutionHumanizationLevel.MEDIUM -> "中：300-1000ms"
+            ExecutionHumanizationLevel.HIGH -> "高：500-2000ms"
+        }
     }
 
     private fun saveActiveConfigId(configId: String) {

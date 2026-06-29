@@ -16,6 +16,7 @@ import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.content.pm.ResolveInfo
 import android.util.Log
+import com.mobileagent.phoneagent.appcatalog.AppAliasRepository
 import com.mobileagent.phoneagent.skill.SkillRegistry
 
 /**
@@ -34,8 +35,25 @@ object AppLauncher {
     fun getPackageName(context: Context, appName: String): String? {
         val candidateNames = SkillRegistry.expandLaunchCandidates(context, appName)
         candidateNames.forEach { candidate ->
+            val aliasPackage = findInstalledAliasPackage(context, candidate)
+            if (aliasPackage != null) {
+                return aliasPackage
+            }
+
             val packageName = getPackageNameInternal(context, candidate)
             if (packageName != null) {
+                return packageName
+            }
+        }
+        return null
+    }
+
+    private fun findInstalledAliasPackage(context: Context, appName: String): String? {
+        val packageHints = AppAliasRepository(context).packageHints(appName)
+        for (packageName in packageHints) {
+            if (isAppInstalled(context, packageName)) {
+                Log.d(TAG, "✅ 应用别名命中: $appName -> $packageName")
+                appNameCache[normalizeForMatch(appName)] = packageName
                 return packageName
             }
         }

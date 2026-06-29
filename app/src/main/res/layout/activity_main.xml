@@ -51,6 +51,15 @@
                     android:text="输入任务后即可开始"
                     android:textColor="?android:attr/textColorSecondary"
                     android:textSize="13sp" />
+
+                <TextView
+                    android:id="@+id/tvRuntimeDiagnosticSummary"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:text="运行诊断：等待检查"
+                    android:textColor="?android:attr/textColorSecondary"
+                    android:textSize="12sp" />
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
@@ -384,6 +393,24 @@
                     android:textColor="?attr/colorOnSurface"
                     android:textSize="16sp"
                     android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/tvRecentPerformanceSummary"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:text="最近任务：暂无可统计记录"
+                    android:textColor="?android:attr/textColorSecondary"
+                    android:textSize="13sp" />
+
+                <TextView
+                    android:id="@+id/tvRecentTaskHealth"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:text="任务健康：暂无历史数据"
+                    android:textColor="?android:attr/textColorSecondary"
+                    android:textSize="13sp" />
 
                 <LinearLayout
                     android:id="@+id/llTaskHistory"

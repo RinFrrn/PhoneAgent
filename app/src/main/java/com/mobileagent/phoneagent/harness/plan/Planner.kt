@@ -46,7 +46,8 @@ class LlmPlanner(
             thinking = modelResponse.thinking,
             rawResponse = modelResponse.rawContent,
             actionJson = actionJson,
-            finishRequested = finishRequested
+            finishRequested = finishRequested,
+            modelCallStats = modelResponse.callStats
         )
     }
 }

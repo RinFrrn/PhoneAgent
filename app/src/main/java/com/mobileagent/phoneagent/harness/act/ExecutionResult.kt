@@ -1,6 +1,7 @@
 package com.mobileagent.phoneagent.harness.act
 
 import com.mobileagent.phoneagent.harness.recover.FailureType
+import com.mobileagent.phoneagent.harness.trace.TaskNote
 
 data class ExecutionRequest(
     val actionJson: String,
@@ -17,5 +18,7 @@ data class ExecutionResult(
     val actionJson: String,
     val requiresTakeover: Boolean = false,
     val failureType: FailureType? = null,
-    val launchTrace: AppLaunchTrace? = null
+    val launchTrace: AppLaunchTrace? = null,
+    val humanizationTrace: ExecutionHumanizationTrace? = null,
+    val taskNote: TaskNote? = null
 )

@@ -1,5 +1,7 @@
 package com.mobileagent.phoneagent
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Intent
 import android.os.Bundle
 import android.widget.Toast
@@ -8,7 +10,10 @@ import com.mobileagent.phoneagent.databinding.ActivityTaskTraceBinding
 import com.mobileagent.phoneagent.harness.learn.LearnedSkillRepository
 import com.mobileagent.phoneagent.harness.learn.TracePathSummarizer
 import com.mobileagent.phoneagent.harness.trace.FileTraceStore
+import com.mobileagent.phoneagent.harness.trace.ModelCallSummaryBuilder
 import com.mobileagent.phoneagent.harness.trace.SessionTrace
+import com.mobileagent.phoneagent.harness.trace.TaskTraceSearch
+import com.mobileagent.phoneagent.harness.trace.TaskTraceExportBuilder
 import com.mobileagent.phoneagent.skill.SkillRegistry
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -21,6 +26,7 @@ class TaskTraceActivity : AppCompatActivity() {
     private val tracePathSummarizer by lazy { TracePathSummarizer() }
     private var taskGoal: String = ""
     private var currentSession: SessionTrace? = null
+    private var fullTraceLog: String = ""
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -44,6 +50,15 @@ class TaskTraceActivity : AppCompatActivity() {
         binding.btnOpenLearnedSkills.setOnClickListener {
             startActivity(Intent(this, LearnedSkillsActivity::class.java))
         }
+        binding.btnCopyTraceLog.setOnClickListener {
+            copyTraceLog()
+        }
+        binding.btnSearchTrace.setOnClickListener {
+            applyTraceSearch()
+        }
+        binding.btnClearTraceSearch.setOnClickListener {
+            clearTraceSearch()
+        }
     }
 
     override fun onSupportNavigateUp(): Boolean {
@@ -60,7 +75,7 @@ class TaskTraceActivity : AppCompatActivity() {
                 appendLine("任务: ${taskGoal.ifBlank { "未记录" }}")
                 append("说明: 任务可能仍在运行，或历史记录对应的 trace 文件不存在。")
             }
-            binding.tvTraceLog.text = "暂无完整输出过程。"
+            setTraceLog("暂无完整输出过程。")
             binding.btnFillTaskDescription.isEnabled = taskGoal.isNotBlank()
             updateGenerateSkillButton(session)
             return
@@ -69,9 +84,30 @@ class TaskTraceActivity : AppCompatActivity() {
         taskGoal = session.taskGoal
         binding.tvTraceTitle.text = "任务日志"
         binding.tvTraceSummary.text = buildTraceSummary(session)
-        binding.tvTraceLog.text = TaskLogFormatter.formatSession(session)
+        setTraceLog(TaskLogFormatter.formatSession(session))
         binding.btnFillTaskDescription.isEnabled = taskGoal.isNotBlank()
         updateGenerateSkillButton(session)
+    }
+
+    private fun setTraceLog(log: String) {
+        fullTraceLog = log
+        binding.tvTraceLog.text = log
+        binding.tvTraceSearchStatus.text = TaskTraceSearch.filter(log, "").statusText()
+    }
+
+    private fun applyTraceSearch() {
+        val result = TaskTraceSearch.filter(
+            log = fullTraceLog,
+            query = binding.etTraceSearch.text?.toString().orEmpty()
+        )
+        binding.tvTraceLog.text = result.displayText
+        binding.tvTraceSearchStatus.text = result.statusText()
+    }
+
+    private fun clearTraceSearch() {
+        binding.etTraceSearch.setText("")
+        binding.tvTraceLog.text = fullTraceLog
+        binding.tvTraceSearchStatus.text = TaskTraceSearch.filter(fullTraceLog, "").statusText()
     }
 
     private fun buildTraceSummary(session: SessionTrace): String {
@@ -85,11 +121,13 @@ class TaskTraceActivity : AppCompatActivity() {
             .distinct()
             .joinToString(" · ")
             .ifBlank { "未记录" }
+        val modelStats = ModelCallSummaryBuilder.summarize(session)
         return buildString {
             appendLine("任务: ${session.taskGoal}")
             appendLine("结果: $outcome · ${session.outcomeMessage ?: "无结果说明"}")
             appendLine("步骤: ${session.totalSteps}")
             appendLine("模型: $model")
+            appendLine(modelStats.toDisplayText())
             appendLine("开始: ${formatTime(session.startedAt)}")
             session.completedAt?.let { appendLine("结束: ${formatTime(it)}") }
             append("Trace: ${session.sessionId.take(8)}")
@@ -157,6 +195,22 @@ class TaskTraceActivity : AppCompatActivity() {
             Toast.makeText(this, "这个 Trace 已生成过动态技能", Toast.LENGTH_SHORT).show()
         }
         updateGenerateSkillButton(session)
+    }
+
+    private fun copyTraceLog() {
+        val exportText = TaskTraceExportBuilder.buildText(
+            title = binding.tvTraceTitle.text?.toString().orEmpty(),
+            summary = binding.tvTraceSummary.text?.toString().orEmpty(),
+            log = binding.tvTraceLog.text?.toString().orEmpty()
+        )
+        if (exportText.isBlank()) {
+            Toast.makeText(this, "暂无日志可复制", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        val clipboard = getSystemService(ClipboardManager::class.java)
+        clipboard.setPrimaryClip(ClipData.newPlainText("PhoneAgent 任务日志", exportText))
+        Toast.makeText(this, "安全日志已复制", Toast.LENGTH_SHORT).show()
     }
 
     private fun formatTime(timestamp: Long): String {

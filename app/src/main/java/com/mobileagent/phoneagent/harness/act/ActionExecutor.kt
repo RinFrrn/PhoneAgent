@@ -6,6 +6,7 @@ import com.mobileagent.phoneagent.action.ActionParser
 import com.mobileagent.phoneagent.action.ActionHandler
 import com.mobileagent.phoneagent.action.LaunchAction
 import com.mobileagent.phoneagent.harness.recover.FailureType
+import com.mobileagent.phoneagent.harness.trace.TaskNoteExtractor
 import com.mobileagent.phoneagent.skill.SkillActionInterceptor
 
 interface ActionExecutor {
@@ -17,55 +18,58 @@ class DefaultActionExecutor(
     private val actionHandler: ActionHandler,
     private val skillActionInterceptor: SkillActionInterceptor,
     private val appLaunchController: AppLaunchController,
-    private val actionParser: ActionParser = ActionParser()
+    private val actionParser: ActionParser = ActionParser(),
+    private val executionHumanizer: ExecutionHumanizer = ExecutionHumanizer.fromSettings(context)
 ) : ActionExecutor {
     private val tag = "DefaultActionExecutor"
 
     override suspend fun execute(request: ExecutionRequest): ExecutionResult {
         return try {
-            val action = runCatching { actionParser.parse(request.actionJson) }.getOrNull()
+            val humanized = executionHumanizer.humanize(request.actionJson)
+            val action = runCatching { actionParser.parse(humanized.actionJson) }.getOrNull()
             if (action is LaunchAction) {
                 return appLaunchController.launch(
                     AppLaunchRequest(
                         appName = action.appName,
-                        actionJson = request.actionJson,
+                        actionJson = humanized.actionJson,
                         currentTask = request.taskGoal
                     )
-                )
+                ).withHumanizationTrace(humanized.trace).withTaskNote()
             }
 
             val primaryResult = actionHandler.execute(
-                request.actionJson,
+                humanized.actionJson,
                 request.screenWidth,
                 request.screenHeight
             )
             if (primaryResult.success) {
-                return primaryResult.toExecutionResult(request.actionJson)
+                return primaryResult.toExecutionResult(humanized.actionJson, humanized.trace)
             }
 
             val fallbackActions = skillActionInterceptor.fallbackActions(
                 context = context,
                 currentApp = request.currentApp,
                 task = request.taskGoal,
-                actionJson = request.actionJson,
+                actionJson = humanized.actionJson,
                 actionResult = primaryResult
             )
 
             for ((index, fallbackAction) in fallbackActions.withIndex()) {
                 Log.w(tag, "尝试 Skill Fallback #${index + 1}: $fallbackAction")
+                val fallbackHumanized = executionHumanizer.humanize(fallbackAction)
                 val fallbackResult = actionHandler.execute(
-                    fallbackAction,
+                    fallbackHumanized.actionJson,
                     request.screenWidth,
                     request.screenHeight
                 )
                 if (fallbackResult.success) {
                     return fallbackResult.copy(
-                        message = "Skill fallback 执行成功: ${fallbackResult.message ?: fallbackAction}"
-                    ).toExecutionResult(fallbackAction)
+                        message = "Skill fallback 执行成功: ${fallbackResult.message ?: fallbackHumanized.actionJson}"
+                    ).toExecutionResult(fallbackHumanized.actionJson, fallbackHumanized.trace ?: humanized.trace)
                 }
             }
 
-            primaryResult.toExecutionResult(request.actionJson)
+            primaryResult.toExecutionResult(humanized.actionJson, humanized.trace)
         } catch (e: Exception) {
             Log.e(tag, "执行动作失败", e)
             ExecutionResult(
@@ -78,7 +82,10 @@ class DefaultActionExecutor(
         }
     }
 
-    private fun com.mobileagent.phoneagent.action.ActionResult.toExecutionResult(actionJson: String): ExecutionResult {
+    private fun com.mobileagent.phoneagent.action.ActionResult.toExecutionResult(
+        actionJson: String,
+        humanizationTrace: ExecutionHumanizationTrace? = null
+    ): ExecutionResult {
         return ExecutionResult(
             success = success,
             shouldFinish = shouldFinish,
@@ -91,7 +98,29 @@ class DefaultActionExecutor(
                 !success && message?.contains("无障碍服务未启用") == true -> FailureType.PERMISSION_MISSING
                 !success -> FailureType.ACTION_EXECUTION_FAILED
                 else -> null
-            }
+            },
+            humanizationTrace = humanizationTrace
+        ).withTaskNote()
+    }
+
+    private fun ExecutionResult.withTaskNote(): ExecutionResult {
+        if (!success || taskNote != null) {
+            return this
+        }
+        val note = TaskNoteExtractor.fromActionJson(actionJson) ?: return this
+        return copy(
+            taskNote = note,
+            message = "${message ?: "动作执行完成"} | ${note.toDisplayText()}"
         )
+    }
+
+    private fun ExecutionResult.withHumanizationTrace(
+        humanizationTrace: ExecutionHumanizationTrace?
+    ): ExecutionResult {
+        return if (humanizationTrace == null) {
+            this
+        } else {
+            copy(humanizationTrace = humanizationTrace)
+        }
     }
 }
