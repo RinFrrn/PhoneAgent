@@ -3,6 +3,10 @@ package com.mobileagent.phoneagent.skill
 import com.mobileagent.phoneagent.harness.learn.LearnedSkill
 import com.mobileagent.phoneagent.harness.learn.LearnedSkillStep
 import com.mobileagent.phoneagent.harness.learn.LearnedSkillStatus
+import com.mobileagent.phoneagent.harness.learn.SemanticAnchor
+import com.mobileagent.phoneagent.harness.learn.SemanticAnchorType
+import com.mobileagent.phoneagent.harness.learn.VerificationSignal
+import com.mobileagent.phoneagent.harness.learn.VerificationSignalType
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -45,6 +49,46 @@ class SkillRegistryTest {
 
         assertNull(appSkill.fallbackProfile)
         assertTrue(appSkill.recoveryGuidance.isEmpty())
+    }
+
+    @Test
+    fun dynamicSkillGuidanceIncludesSemanticReplayEvidence() {
+        val learnedSkill = learnedSkill(status = LearnedSkillStatus.DRAFT).copy(
+            steps = listOf(
+                LearnedSkillStep(
+                    stepIndex = 1,
+                    actionType = "Tap",
+                    targetHint = "坐标(120, 240)",
+                    actionSummary = "点击搜索框",
+                    successSignal = "出现取消按钮",
+                    verificationReason = "页面内容变化",
+                    semanticAnchors = listOf(
+                        SemanticAnchor(SemanticAnchorType.ACTION_MESSAGE, "点击搜索框", 0.7f),
+                        SemanticAnchor(SemanticAnchorType.SCREEN_TEXT, "搜索", 0.5f)
+                    ),
+                    verificationSignals = listOf(
+                        VerificationSignal(
+                            VerificationSignalType.VISIBLE_TEXT_APPEARED,
+                            "取消",
+                            "执行后出现新文本"
+                        )
+                    ),
+                    recoveryHints = listOf("目标缺失时先等待加载，不要重复点击旧坐标。")
+                )
+            )
+        )
+
+        val appSkill = SkillRegistry.run { learnedSkill.toAppSkill() }
+
+        assertTrue(appSkill.guidance.contains("语义锚点"))
+        assertTrue(appSkill.guidance.contains("ACTION_MESSAGE:点击搜索框"))
+        assertTrue(appSkill.guidance.contains("验证信号"))
+        assertTrue(appSkill.guidance.contains("VISIBLE_TEXT_APPEARED:取消"))
+        assertTrue(appSkill.guidance.contains("不是固定回放脚本"))
+        assertEquals(
+            "目标缺失时先等待加载，不要重复点击旧坐标。",
+            appSkill.recoveryGuidance["Tap"]
+        )
     }
 
     private fun learnedSkill(

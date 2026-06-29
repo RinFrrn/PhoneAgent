@@ -60,6 +60,15 @@ class DefaultRecoveryPolicy {
                     append("请结合当前页面重新规划，不要重复同一操作。")
                 }
             )
+            FailureType.RECORDED_TARGET_MISSING -> RecoveryDecision(
+                userMessage = "复用已学习路径时未找到语义目标。请重新观察当前页面，优先等待加载、关闭遮挡弹窗、滚动查找目标；不要直接使用旧坐标。"
+            )
+            FailureType.RECORDED_STATE_TIMEOUT -> RecoveryDecision(
+                userMessage = "复用已学习路径时等待页面状态超时。请检查是否仍在目标应用，必要时返回上一层或重新进入目标页面。"
+            )
+            FailureType.RECORDED_OBSTRUCTION_DETECTED -> RecoveryDecision(
+                userMessage = "复用已学习路径时疑似遇到广告、弹窗或权限提示遮挡。请优先关闭遮挡物，确认页面恢复后再继续原路径。"
+            )
             FailureType.USER_TAKEOVER_REQUIRED -> RecoveryDecision(
                 requiresUserTakeover = true,
                 userMessage = execution?.message ?: "需要用户接管"

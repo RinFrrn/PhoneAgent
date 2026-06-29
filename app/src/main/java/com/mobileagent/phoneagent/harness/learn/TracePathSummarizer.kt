@@ -3,8 +3,10 @@ package com.mobileagent.phoneagent.harness.learn
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
+import com.mobileagent.phoneagent.harness.observe.Observation
 import com.mobileagent.phoneagent.harness.runtime.StepStatus
 import com.mobileagent.phoneagent.harness.trace.SessionTrace
+import com.mobileagent.phoneagent.harness.trace.StepTrace
 import java.util.Locale
 import java.util.UUID
 
@@ -23,15 +25,21 @@ class TracePathSummarizer {
             .mapNotNull { step ->
                 val actionJson = step.execution?.actionJson ?: step.decision?.actionJson ?: return@mapNotNull null
                 val parsed = parseAction(actionJson)
+                val anchors = buildSemanticAnchors(step, parsed)
+                val signals = buildVerificationSignals(step, parsed)
                 LearnedSkillStep(
                     stepIndex = step.stepIndex,
                     actionType = parsed.actionType,
                     targetHint = parsed.targetHint,
                     actionSummary = parsed.summary,
-                    successSignal = step.verification?.observedChange?.takeIf { it.isNotBlank() }
+                    successSignal = buildSuccessSignal(signals)
+                        ?: step.verification?.observedChange?.takeIf { it.isNotBlank() }
                         ?: step.execution?.message?.takeIf { it.isNotBlank() }
                         ?: "操作验证通过",
-                    verificationReason = step.verification?.reason.orEmpty().ifBlank { "验证通过" }
+                    verificationReason = step.verification?.reason.orEmpty().ifBlank { "验证通过" },
+                    semanticAnchors = anchors,
+                    verificationSignals = signals,
+                    recoveryHints = buildRecoveryHints(parsed, signals)
                 )
             }
 
@@ -85,21 +93,202 @@ class TracePathSummarizer {
         }
 
         val actionType = json.optString("action").ifBlank { metadata.ifBlank { "Unknown" } }
-        val targetHint = when (actionType) {
+        val message = json.optString("message")
+        val coordinate = when (actionType) {
             "Tap", "Click", "Long Press", "Double Tap" -> formatPoint(json.optArray("element"))
+            else -> null
+        }
+        val inputText = when (actionType) {
+            "Type", "Type_Name" -> sanitizeText(json.optString("text"))
+            else -> ""
+        }
+        val appName = if (actionType == "Launch") json.optString("app") else ""
+        val targetHint = when (actionType) {
+            "Tap", "Click", "Long Press", "Double Tap" -> coordinate ?: "当前元素"
             "Swipe" -> "${formatPoint(json.optArray("start"))} -> ${formatPoint(json.optArray("end"))}"
-            "Type", "Type_Name" -> sanitizeText(json.optString("text")).ifBlank { "输入文本" }
-            "Launch" -> json.optString("app").ifBlank { "启动应用" }
-            "Take_over", "Note" -> json.optString("message").ifBlank { "提示信息" }
+            "Type", "Type_Name" -> inputText.ifBlank { "输入文本" }
+            "Launch" -> appName.ifBlank { "启动应用" }
+            "Take_over", "Note" -> message.ifBlank { "提示信息" }
             "Call_API" -> json.optString("instruction").ifBlank { "调用 API" }
-            else -> json.optString("message").ifBlank { "当前页面" }
+            else -> message.ifBlank { "当前页面" }
         }
 
         return ParsedAction(
             actionType = actionType,
             targetHint = targetHint,
-            summary = buildActionSummary(actionType, targetHint)
+            summary = buildActionSummary(actionType, targetHint),
+            appName = appName,
+            inputText = inputText,
+            message = message,
+            coordinate = coordinate
         )
+    }
+
+    private fun buildSemanticAnchors(step: StepTrace, parsed: ParsedAction): List<SemanticAnchor> {
+        val before = step.observationBefore
+        return buildList {
+            before.currentApp?.trim()?.takeIf { it.isNotBlank() }?.let {
+                add(SemanticAnchor(SemanticAnchorType.CURRENT_APP, it, 0.9f))
+            }
+            before.currentPackage?.trim()?.takeIf { it.isNotBlank() }?.let {
+                add(SemanticAnchor(SemanticAnchorType.CURRENT_PACKAGE, it, 0.95f))
+            }
+            parsed.appName.takeIf { it.isNotBlank() }?.let {
+                add(SemanticAnchor(SemanticAnchorType.TARGET_TEXT, it, 0.9f))
+            }
+            parsed.inputText.takeIf { it.isNotBlank() }?.let {
+                add(SemanticAnchor(SemanticAnchorType.INPUT_TEXT, it, 0.9f))
+            }
+            parsed.message.takeIf { it.isNotBlank() }?.let {
+                add(SemanticAnchor(SemanticAnchorType.ACTION_MESSAGE, sanitizeText(it), 0.65f))
+            }
+            parsed.coordinate?.let {
+                add(SemanticAnchor(SemanticAnchorType.COORDINATE, it, 0.35f))
+            }
+
+            visibleTexts(before)
+                .filter { text -> text != parsed.inputText }
+                .take(MAX_SCREEN_TEXT_ANCHORS)
+                .forEach { text ->
+                    add(SemanticAnchor(SemanticAnchorType.SCREEN_TEXT, text, 0.45f))
+                }
+        }.distinctBy { it.type to it.value }
+    }
+
+    private fun buildVerificationSignals(step: StepTrace, parsed: ParsedAction): List<VerificationSignal> {
+        val before = step.observationBefore
+        val after = step.observationAfter
+        return buildList {
+            if (step.execution?.shouldFinish == true || parsed.actionType == "finish") {
+                add(
+                    VerificationSignal(
+                        VerificationSignalType.EXPLICIT_FINISH,
+                        step.verification?.reason.orEmpty().ifBlank { "任务显式结束" },
+                        "模型已声明任务完成"
+                    )
+                )
+            }
+
+            val launchTrace = step.execution?.launchTrace
+            launchTrace?.targetPackage?.takeIf { it.isNotBlank() }?.let { targetPackage ->
+                val observedPackage = after?.currentPackage ?: launchTrace.afterPackage
+                if (observedPackage == targetPackage) {
+                    add(
+                        VerificationSignal(
+                            VerificationSignalType.PACKAGE_REACHED,
+                            targetPackage,
+                            "启动后到达目标包名"
+                        )
+                    )
+                }
+            }
+
+            if (after != null && before.currentPackage != after.currentPackage) {
+                add(
+                    VerificationSignal(
+                        VerificationSignalType.PACKAGE_CHANGED,
+                        "${before.currentPackage.orEmpty()} -> ${after.currentPackage.orEmpty()}",
+                        "执行后包名变化"
+                    )
+                )
+            }
+            if (after != null && before.currentApp != after.currentApp) {
+                add(
+                    VerificationSignal(
+                        VerificationSignalType.APP_CHANGED,
+                        "${before.currentApp.orEmpty()} -> ${after.currentApp.orEmpty()}",
+                        "执行后当前应用变化"
+                    )
+                )
+            }
+
+            if (after != null) {
+                val beforeTexts = visibleTexts(before).toSet()
+                val afterTexts = visibleTexts(after).toSet()
+                (afterTexts - beforeTexts).take(MAX_TEXT_SIGNAL_COUNT).forEach { text ->
+                    add(
+                        VerificationSignal(
+                            VerificationSignalType.VISIBLE_TEXT_APPEARED,
+                            text,
+                            "执行后出现新文本"
+                        )
+                    )
+                }
+                (beforeTexts - afterTexts).take(MAX_TEXT_SIGNAL_COUNT).forEach { text ->
+                    add(
+                        VerificationSignal(
+                            VerificationSignalType.VISIBLE_TEXT_REMOVED,
+                            text,
+                            "执行后文本消失"
+                        )
+                    )
+                }
+                parsed.inputText.takeIf { it.isNotBlank() && after.textDigest().contains(it) }?.let { text ->
+                    add(
+                        VerificationSignal(
+                            VerificationSignalType.INPUT_TEXT_VISIBLE,
+                            text,
+                            "输入内容在页面中可见"
+                        )
+                    )
+                }
+            }
+
+            step.verification?.observedChange?.takeIf { it.isNotBlank() }?.let { change ->
+                add(
+                    VerificationSignal(
+                        VerificationSignalType.CONTENT_CHANGED,
+                        sanitizeText(change),
+                        "验证器观察到页面变化"
+                    )
+                )
+            }
+            if (isEmpty()) {
+                add(
+                    VerificationSignal(
+                        VerificationSignalType.GENERIC_VERIFICATION,
+                        step.verification?.reason.orEmpty().ifBlank { "验证通过" },
+                        "通用验证通过"
+                    )
+                )
+            }
+        }.distinctBy { it.type to it.value }
+    }
+
+    private fun buildSuccessSignal(signals: List<VerificationSignal>): String? {
+        if (signals.isEmpty()) {
+            return null
+        }
+        return signals
+            .take(MAX_SIGNAL_SUMMARY_COUNT)
+            .joinToString("；") { "${it.description}:${it.value}" }
+            .take(MAX_TEXT_LENGTH)
+    }
+
+    private fun buildRecoveryHints(
+        parsed: ParsedAction,
+        signals: List<VerificationSignal>
+    ): List<String> {
+        return buildList {
+            when (parsed.actionType) {
+                "Tap", "Click", "Long Press", "Double Tap" -> {
+                    add("复用时优先按文本/页面语义重新定位目标，坐标只作为低置信兜底。")
+                    add("目标缺失或页面未变化时先重新观察、等待加载，避免连续点击同一坐标。")
+                }
+                "Type", "Type_Name" -> {
+                    add("输入前确认焦点仍在目标输入框；输入后检查输入内容是否出现在页面。")
+                }
+                "Launch" -> {
+                    add("启动后用包名或应用名确认已到达目标应用，未到达时不要重复后台启动。")
+                }
+                "Swipe" -> {
+                    add("滑动后需要确认页面文本发生变化；无变化时换方向或缩短滑动距离。")
+                }
+            }
+            if (signals.any { it.type == VerificationSignalType.CONTENT_CHANGED }) {
+                add("如果出现广告或弹窗，先关闭遮挡物再继续当前路径。")
+            }
+        }.distinct().take(MAX_RECOVERY_HINTS)
     }
 
     private fun buildActionSummary(actionType: String, targetHint: String): String {
@@ -126,6 +315,19 @@ class TracePathSummarizer {
 
     private fun sanitizeText(text: String): String {
         return text.replace('\n', ' ').trim().take(MAX_TEXT_LENGTH)
+    }
+
+    private fun visibleTexts(observation: Observation): List<String> {
+        return observation.contentItems
+            .filter { it.type == "text" }
+            .mapNotNull { it.text }
+            .map { sanitizeText(it) }
+            .filter { it.isNotBlank() }
+            .distinct()
+    }
+
+    private fun Observation.textDigest(): String {
+        return visibleTexts(this).joinToString("\n")
     }
 
     private fun buildDisplayName(taskGoal: String): String {
@@ -155,7 +357,11 @@ class TracePathSummarizer {
     private data class ParsedAction(
         val actionType: String,
         val targetHint: String,
-        val summary: String
+        val summary: String,
+        val appName: String = "",
+        val inputText: String = "",
+        val message: String = "",
+        val coordinate: String? = null
     )
 
     private fun JsonObject.optString(key: String): String {
@@ -181,5 +387,9 @@ class TracePathSummarizer {
         const val MAX_TEXT_LENGTH = 60
         const val MAX_SUMMARY_ACTION_LENGTH = 80
         const val MAX_TASK_KEYWORDS = 8
+        const val MAX_SCREEN_TEXT_ANCHORS = 5
+        const val MAX_TEXT_SIGNAL_COUNT = 3
+        const val MAX_SIGNAL_SUMMARY_COUNT = 2
+        const val MAX_RECOVERY_HINTS = 3
     }
 }

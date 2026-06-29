@@ -92,7 +92,7 @@ object SkillRegistry {
                 .distinct(),
             launchAliases = emptyList(),
             guidance = buildLearnedGuidance(),
-            recoveryGuidance = emptyMap(),
+            recoveryGuidance = buildLearnedRecoveryGuidance(),
             fallbackProfile = null
         )
     }
@@ -108,11 +108,41 @@ object SkillRegistry {
             append("可复用步骤：\n")
             steps.forEachIndexed { index, step ->
                 append("${index + 1}. ${step.actionSummary}")
+                val anchors = step.semanticAnchors.orEmpty()
+                    .take(4)
+                    .joinToString("，") { "${it.type}:${it.value}" }
+                if (anchors.isNotBlank()) {
+                    append("；语义锚点：$anchors")
+                }
                 append("；成功信号：${step.successSignal}")
+                val signals = step.verificationSignals.orEmpty()
+                    .take(3)
+                    .joinToString("，") { "${it.type}:${it.value}" }
+                if (signals.isNotBlank()) {
+                    append("；验证信号：$signals")
+                }
+                val hints = step.recoveryHints.orEmpty().joinToString("；")
+                if (hints.isNotBlank()) {
+                    append("；异常处理：$hints")
+                }
                 append("；验证：${step.verificationReason}\n")
             }
-            append("复用要求：先确认当前页面和目标任务匹配；页面不同或涉及敏感操作时重新规划，不要盲目照搬坐标。")
+            append("复用要求：把这些步骤当作已验证路径和页面证据，而不是固定回放脚本。")
+            append("优先按语义锚点重新定位目标；每一步后检查验证信号。")
+            append("页面不同、加载未完成、出现广告/弹窗或涉及敏感操作时，先恢复当前页面或重新规划，不要盲目照搬坐标。")
         }.trim()
+    }
+
+    private fun LearnedSkill.buildLearnedRecoveryGuidance(): Map<String, String> {
+        return steps
+            .groupBy { it.actionType }
+            .mapValues { (_, steps) ->
+                steps
+                    .flatMap { it.recoveryHints.orEmpty() }
+                    .distinct()
+                    .joinToString("\n")
+            }
+            .filterValues { it.isNotBlank() }
     }
 
     private fun parseSkills(array: JSONArray): List<AppSkill> {

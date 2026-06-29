@@ -226,20 +226,19 @@
                 android:orientation="vertical"
                 android:padding="16dp">
 
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnAdvancedToggle"
-                    style="@style/Widget.MaterialComponents.Button.TextButton"
+                <TextView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:text="高级工具"
-                    android:textAllCaps="false" />
+                    android:textColor="?attr/colorOnSurface"
+                    android:textSize="16sp"
+                    android:textStyle="bold" />
 
                 <LinearLayout
                     android:id="@+id/advancedContent"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:orientation="vertical"
-                    android:visibility="gone">
+                    android:orientation="vertical">
 
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/btnRunEval"
@@ -268,20 +267,14 @@
                         android:text="动态技能"
                         android:textAllCaps="false" />
 
-                    <TextView
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="16dp"
-                        android:text="最近任务"
-                        android:textColor="?attr/colorOnSurface"
-                        android:textStyle="bold" />
-
-                    <LinearLayout
-                        android:id="@+id/llTaskHistory"
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnStartTeaching"
+                        style="@style/Widget.MaterialComponents.Button.OutlinedButton"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="8dp"
-                        android:orientation="vertical" />
+                        android:text="示教录制"
+                        android:textAllCaps="false" />
 
                     <LinearLayout
                         android:layout_width="match_parent"
@@ -329,9 +322,17 @@
                             android:checked="true"
                             android:minWidth="0dp"
                             android:paddingStart="4dp"
-                            android:text="自动"
+                            android:text="跟随最新"
                             android:textSize="12sp" />
                     </LinearLayout>
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="2dp"
+                        android:text="开启后新日志自动滚到底部；关闭后可停留查看历史内容。"
+                        android:textColor="?android:attr/textColorSecondary"
+                        android:textSize="12sp" />
 
                     <ScrollView
                         android:id="@+id/svLog"
@@ -358,6 +359,38 @@
                             android:textSize="12sp" />
                     </ScrollView>
                 </LinearLayout>
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            app:cardCornerRadius="8dp"
+            app:cardElevation="0dp"
+            app:strokeColor="@color/main_card_stroke"
+            app:strokeWidth="1dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="16dp">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="最近任务"
+                    android:textColor="?attr/colorOnSurface"
+                    android:textSize="16sp"
+                    android:textStyle="bold" />
+
+                <LinearLayout
+                    android:id="@+id/llTaskHistory"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:orientation="vertical" />
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
@@ -402,6 +435,19 @@
                 android:paddingStart="8dp"
                 android:paddingEnd="8dp"
                 android:text="模型"
+                android:textAllCaps="false"
+                android:textSize="12sp" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnQuickAsk"
+                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                android:layout_width="wrap_content"
+                android:layout_height="36dp"
+                android:layout_marginStart="6dp"
+                android:minWidth="0dp"
+                android:paddingStart="10dp"
+                android:paddingEnd="10dp"
+                android:text="问屏"
                 android:textAllCaps="false"
                 android:textSize="12sp" />
         </LinearLayout>

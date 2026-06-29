@@ -28,6 +28,8 @@ import android.view.accessibility.AccessibilityNodeInfo
 import androidx.annotation.RequiresApi
 import com.mobileagent.phoneagent.harness.act.PopupConfirmationResult
 import com.mobileagent.phoneagent.harness.act.PopupConfirmationStatus
+import com.mobileagent.phoneagent.harness.learn.TeachingAccessibilityEvent
+import com.mobileagent.phoneagent.harness.learn.TeachingRecorder
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -119,11 +121,37 @@ class PhoneAgentAccessibilityService : AccessibilityService() {
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        // 可以在这里监听界面变化
+        event ?: return
+        if (!TeachingRecorder.isActive()) {
+            return
+        }
+        TeachingRecorder.recordAccessibilityEvent(
+            TeachingAccessibilityEvent(
+                eventType = event.toTeachingEventType(),
+                packageName = event.packageName?.toString(),
+                className = event.className?.toString(),
+                text = event.text.joinToString(" ").takeIf { it.isNotBlank() },
+                contentDescription = event.contentDescription?.toString(),
+                eventTime = event.eventTime
+            )
+        )
     }
 
     override fun onInterrupt() {
         Log.w(TAG, "无障碍服务被中断")
+    }
+
+    private fun AccessibilityEvent.toTeachingEventType(): String {
+        return when (eventType) {
+            AccessibilityEvent.TYPE_VIEW_CLICKED -> "CLICK"
+            AccessibilityEvent.TYPE_VIEW_LONG_CLICKED -> "LONG_CLICK"
+            AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED -> "TEXT_CHANGED"
+            AccessibilityEvent.TYPE_VIEW_TEXT_SELECTION_CHANGED -> "TEXT_SELECTION"
+            AccessibilityEvent.TYPE_VIEW_FOCUSED -> "VIEW_FOCUSED"
+            AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED,
+            AccessibilityEvent.TYPE_WINDOWS_CHANGED -> "WINDOW_CHANGED"
+            else -> "OTHER"
+        }
     }
 
     fun getGestureDisplayBounds(): GestureDisplayBounds {

@@ -288,7 +288,15 @@ class PhoneAgent(
             finished = status == StepStatus.FINISHED,
             thinking = decision?.thinking ?: (errorMessage ?: "步骤执行失败"),
             action = decision?.actionJson ?: "",
-            message = execution?.message ?: errorMessage
+            message = execution?.message ?: errorMessage,
+            stepIndex = stepIndex,
+            status = status.name,
+            rawResponse = decision?.rawResponse,
+            currentApp = observation.currentApp,
+            verificationSummary = verification?.let {
+                "passed=${it.passed}, confidence=${it.confidence}, reason=${it.reason}"
+            },
+            failureType = execution?.failureType?.name
         )
     }
 
@@ -302,7 +310,13 @@ data class StepResult(
     val finished: Boolean,
     val thinking: String,
     val action: String,
-    val message: String? = null
+    val message: String? = null,
+    val stepIndex: Int? = null,
+    val status: String? = null,
+    val rawResponse: String? = null,
+    val currentApp: String? = null,
+    val verificationSummary: String? = null,
+    val failureType: String? = null
 )
 
 data class TaskOutcome(

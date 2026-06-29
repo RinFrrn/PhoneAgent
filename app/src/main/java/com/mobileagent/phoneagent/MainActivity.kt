@@ -45,6 +45,8 @@ import com.mobileagent.phoneagent.harness.eval.EvalCase
 import com.mobileagent.phoneagent.harness.eval.EvalRunner
 import com.mobileagent.phoneagent.harness.runtime.RuntimePhase
 import com.mobileagent.phoneagent.harness.runtime.RuntimeStatusUpdate
+import com.mobileagent.phoneagent.harness.runtime.SystemPromptBuilder
+import com.mobileagent.phoneagent.harness.runtime.TaskRunController
 import com.mobileagent.phoneagent.harness.spec.TaskSpec
 import com.mobileagent.phoneagent.harness.trace.FileTraceStore
 import com.mobileagent.phoneagent.harness.trace.TaskHistoryEntry
@@ -73,7 +75,7 @@ class MainActivity : AppCompatActivity() {
     private var mainStatusMessage: String? = null
     private var mainStatusDetail: String? = null
     private var isTaskActive = false
-    private var isAdvancedExpanded = false
+    private var pendingQuickAskAfterScreenCapture = false
     private var recentOverlayStatus = "等待任务"
     private var recentOverlayDetail = "等待第一个执行结果"
     private val traceStore by lazy { FileTraceStore(this) }
@@ -90,9 +92,7 @@ class MainActivity : AppCompatActivity() {
         private const val MAX_LOG_LINES = 500
         private const val MAX_LOG_CHARS = 60_000
         private const val LOG_BOTTOM_THRESHOLD_PX = 48
-        private const val THINKING_PREVIEW_LENGTH = 280
-        private const val ACTION_PREVIEW_LENGTH = 600
-        private const val MESSAGE_PREVIEW_LENGTH = 400
+        const val EXTRA_TASK_DESCRIPTION = "com.mobileagent.phoneagent.extra.TASK_DESCRIPTION"
     }
     
     private var isVoiceInputActive = false
@@ -130,6 +130,13 @@ class MainActivity : AppCompatActivity() {
         setupViews()
         checkPermissions()
         loadTaskFromPrefs() // 加载上次保存的任务
+        handleTaskIntent(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleTaskIntent(intent)
     }
 
     private fun setupViews() {
@@ -153,9 +160,17 @@ class MainActivity : AppCompatActivity() {
             startActivity(Intent(this, LearnedSkillsActivity::class.java))
         }
 
+        binding.btnStartTeaching.setOnClickListener {
+            showTeachingOverlay()
+        }
+
         binding.btnOpenSettings.setOnClickListener {
             val intent = Intent(this, SettingsActivity::class.java)
             startActivity(intent)
+        }
+
+        binding.btnQuickAsk.setOnClickListener {
+            showQuickAskOverlay()
         }
 
         binding.btnRefreshExampleTasks.setOnClickListener {
@@ -187,11 +202,6 @@ class MainActivity : AppCompatActivity() {
                 mainStatusDetail = null
                 renderMainUiState()
             }
-        }
-
-        binding.btnAdvancedToggle.setOnClickListener {
-            isAdvancedExpanded = !isAdvancedExpanded
-            renderMainUiState()
         }
 
         setupLogControls()
@@ -266,7 +276,10 @@ class MainActivity : AppCompatActivity() {
         val overlayEnabled = Settings.canDrawOverlays(this)
         val selectedMode = getSelectedMode()
         val visualMode = selectedMode != Mode.ACCESSIBILITY
-        val running = isTaskActive || phoneAgent?.isTaskRunning() == true || evalJob != null
+        val running = isTaskActive ||
+            phoneAgent?.isTaskRunning() == true ||
+            TaskRunController.isRunning() ||
+            evalJob != null
 
         binding.tvAccessibilityStatus.text = if (accessibilityEnabled) "无障碍：已开启" else "无障碍：未开启"
         binding.tvOverlayStatus.text = if (overlayEnabled) "悬浮窗：已授权" else "悬浮窗：未授权"
@@ -322,17 +335,20 @@ class MainActivity : AppCompatActivity() {
         binding.btnStop.isEnabled = running
         binding.btnStart.visibility = if (running) View.GONE else View.VISIBLE
         binding.btnStop.visibility = if (running) View.VISIBLE else View.GONE
+        binding.btnQuickAsk.isEnabled = !running
+        binding.btnStartTeaching.isEnabled = !running
         binding.btnRunEval.isEnabled = !running
 
-        val showAdvanced = isAdvancedExpanded || running
-        binding.advancedContent.visibility = if (showAdvanced) View.VISIBLE else View.GONE
-        binding.btnAdvancedToggle.text = if (showAdvanced) "收起高级工具" else "高级工具"
+        binding.advancedContent.visibility = View.VISIBLE
         renderTaskHistory()
     }
 
     private fun refreshExampleTasks() {
         currentExampleTasks = exampleTaskPool.shuffled().take(EXAMPLE_TASK_COUNT)
-        val running = isTaskActive || phoneAgent?.isTaskRunning() == true || evalJob != null
+        val running = isTaskActive ||
+            phoneAgent?.isTaskRunning() == true ||
+            TaskRunController.isRunning() ||
+            evalJob != null
         val modelConfigured = SettingsActivity.getActiveModelConfig(this).isConfigured
         renderExampleTasks(modelConfigured, running)
     }
@@ -368,7 +384,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun startExampleTask(task: String) {
-        val running = isTaskActive || phoneAgent?.isTaskRunning() == true || evalJob != null
+        val running = isTaskActive ||
+            phoneAgent?.isTaskRunning() == true ||
+            TaskRunController.isRunning() ||
+            evalJob != null
         if (running) {
             Toast.makeText(this, "任务执行中，请稍后再试", Toast.LENGTH_SHORT).show()
             return
@@ -378,6 +397,85 @@ class MainActivity : AppCompatActivity() {
         binding.etTask.setSelection(task.length)
         binding.tvVoiceStatus.text = ""
         startTask()
+    }
+
+    private fun showQuickAskOverlay() {
+        if (!isAccessibilityServiceEnabled()) {
+            Toast.makeText(this, "请先启用无障碍服务", Toast.LENGTH_LONG).show()
+            openAccessibilitySettings()
+            return
+        }
+
+        if (!Settings.canDrawOverlays(this)) {
+            Toast.makeText(this, "请先授予悬浮窗权限", Toast.LENGTH_LONG).show()
+            val intent = Intent(
+                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                android.net.Uri.parse("package:$packageName")
+            )
+            startActivityForResult(intent, REQUEST_CODE_OVERLAY)
+            return
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            Toast.makeText(this, "需要通知权限才能显示任务状态", Toast.LENGTH_LONG).show()
+            ActivityCompat.requestPermissions(
+                this,
+                arrayOf(Manifest.permission.POST_NOTIFICATIONS),
+                REQUEST_CODE_NOTIFICATION
+            )
+            return
+        }
+
+        val modelConfig = SettingsActivity.getActiveModelConfig(this)
+        if (!modelConfig.isConfigured) {
+            Toast.makeText(this, "请先完成模型配置", Toast.LENGTH_LONG).show()
+            startActivity(Intent(this, SettingsActivity::class.java))
+            return
+        }
+
+        val selectedMode = getSelectedMode()
+        if ((selectedMode == Mode.VISION || selectedMode == Mode.HYBRID) && mediaProjection == null) {
+            pendingQuickAskAfterScreenCapture = true
+            Toast.makeText(this, "问屏需要先授权屏幕录制", Toast.LENGTH_SHORT).show()
+            setMainStatus("准备请求屏幕录制权限", "授权后会自动打开一键问屏悬浮窗。")
+            requestScreenCapturePermission()
+            return
+        }
+
+        TaskRunController.setMediaProjection(mediaProjection)
+        FloatingOverlayService.showQuickAsk(
+            context = this,
+            modeName = selectedMode.name,
+            hasScreenCapture = mediaProjection != null
+        )
+        moveTaskToBack(true)
+    }
+
+    private fun showTeachingOverlay() {
+        if (isTaskActive || phoneAgent?.isTaskRunning() == true || TaskRunController.isRunning() || evalJob != null) {
+            Toast.makeText(this, "任务执行中，无法开始示教录制", Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (!isAccessibilityServiceEnabled()) {
+            Toast.makeText(this, "示教录制需要先开启无障碍服务", Toast.LENGTH_LONG).show()
+            openAccessibilitySettings()
+            return
+        }
+        if (!Settings.canDrawOverlays(this)) {
+            Toast.makeText(this, "示教录制需要悬浮窗权限", Toast.LENGTH_LONG).show()
+            FloatingOverlayService.requestPermission(this)
+            return
+        }
+
+        FloatingOverlayService.showTeaching(
+            context = this,
+            initialGoal = binding.etTask.text?.toString()?.trim().orEmpty()
+        )
+        setMainStatus("示教录制中", "请在悬浮窗中记录每一步页面状态，完成后会生成动态技能。")
+        moveTaskToBack(true)
     }
 
     private fun isAccessibilityServiceEnabled(): Boolean {
@@ -523,6 +621,7 @@ class MainActivity : AppCompatActivity() {
                             try {
                                 val mediaProjectionManager = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
                                 mediaProjection = mediaProjectionManager.getMediaProjection(resultCode, data)
+                                TaskRunController.setMediaProjection(mediaProjection)
                                 
                                 // Android 14+ 要求：必须先注册回调才能使用 MediaProjection
                                 mediaProjection?.registerCallback(
@@ -531,6 +630,7 @@ class MainActivity : AppCompatActivity() {
                                             android.util.Log.d("MainActivity", "MediaProjection 已停止")
                                             // MediaProjection 已停止，清空引用，下次需要重新请求
                                             mediaProjection = null
+                                            TaskRunController.setMediaProjection(null)
                                             checkPermissions()
                                         }
                                     },
@@ -540,6 +640,14 @@ class MainActivity : AppCompatActivity() {
                                 android.util.Log.d("MainActivity", "✅ MediaProjection 创建成功，回调已注册")
                                 Toast.makeText(this, "屏幕录制权限已授予", Toast.LENGTH_SHORT).show()
                                 checkPermissions()
+
+                                if (pendingQuickAskAfterScreenCapture) {
+                                    pendingQuickAskAfterScreenCapture = false
+                                    binding.root.post {
+                                        showQuickAskOverlay()
+                                    }
+                                    return@postDelayed
+                                }
                                 
                                 // 如果用户之前点击了开始任务，现在自动开始
                                 val task = binding.etTask.text.toString().trim()
@@ -561,6 +669,7 @@ class MainActivity : AppCompatActivity() {
                         Toast.makeText(this, "处理权限失败: ${e.message}", Toast.LENGTH_LONG).show()
                     }
                 } else {
+                    pendingQuickAskAfterScreenCapture = false
                     Toast.makeText(this, "需要屏幕录制权限才能截图，请重新点击开始任务", Toast.LENGTH_LONG).show()
                     isTaskActive = false
                     setMainStatus("屏幕录制未授权", "视觉或混合模式需要截图权限；也可以切换到无障碍模式。")
@@ -790,7 +899,6 @@ class MainActivity : AppCompatActivity() {
 
         // 更新 UI
         isTaskActive = true
-        isAdvancedExpanded = true
         setMainStatus("任务执行中", "应用会进入后台继续执行，可通过悬浮窗观察状态。")
         clearLog()
         resetStepCount()
@@ -832,6 +940,7 @@ class MainActivity : AppCompatActivity() {
                     appendLog("✅ 任务完成: ${result.message}")
                     android.util.Log.d("MainActivity", "任务完成，清理 MediaProjection，下次启动时将重新请求权限")
                     mediaProjection = null
+                    TaskRunController.setMediaProjection(null)
                 } else {
                     isTaskActive = false
                     setMainStatus("任务失败", result.message)
@@ -854,6 +963,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun stopTask() {
+        if (TaskRunController.isRunning()) {
+            TaskRunController.stop(this)
+        }
         evalJob?.cancel()
         evalJob = null
         phoneAgent?.stop()
@@ -943,7 +1055,6 @@ class MainActivity : AppCompatActivity() {
 
         val activeEvalRunner = ActiveEvalRunner(evalRunner)
         isTaskActive = true
-        isAdvancedExpanded = true
         setMainStatus("评测执行中", "正在按默认用例运行回归评测。")
         binding.tvLog.text = ""
         resetStepCount()
@@ -1169,66 +1280,14 @@ class MainActivity : AppCompatActivity() {
     private var currentStepCount = 0
     
     private fun updateStepInfo(stepResult: com.mobileagent.phoneagent.agent.StepResult) {
-        // 如果是分析中的状态，不增加步骤计数
-        if (stepResult.action == "分析中...") {
-            appendLog("🤖 AI 分析中...")
-            appendLog(formatLogSection("思考摘要", stepResult.thinking, THINKING_PREVIEW_LENGTH))
-            appendLog("")
-            return
-        }
-        
-        // 如果是执行中的状态，不增加步骤计数
-        if (stepResult.message == "正在执行操作...") {
-            appendLog("🎯 执行操作:")
-            appendLog(formatLogSection("操作指令", stepResult.action, ACTION_PREVIEW_LENGTH))
-            appendLog("")
-            return
-        }
-        
         // 正常步骤更新
         currentStepCount++
         android.util.Log.d("MainActivity", "📝 更新步骤信息: $currentStepCount")
-        appendLog("──── 步骤 $currentStepCount ────")
-        appendLog("状态: ${formatStepStatus(stepResult)}")
-        appendLog(formatLogSection("思考摘要", stepResult.thinking, THINKING_PREVIEW_LENGTH))
-        appendLog(formatLogSection("操作指令", stepResult.action, ACTION_PREVIEW_LENGTH))
-        stepResult.message?.let { message ->
-            appendLog(formatLogSection("执行结果", message, MESSAGE_PREVIEW_LENGTH))
-        }
+        val displayStep = stepResult.copy(stepIndex = stepResult.stepIndex ?: currentStepCount)
+        appendLog(TaskLogFormatter.formatLiveStep(displayStep))
         appendLog("")
     }
 
-    private fun formatStepStatus(stepResult: com.mobileagent.phoneagent.agent.StepResult): String {
-        return when {
-            stepResult.finished && stepResult.success -> "任务完成"
-            stepResult.finished -> "已结束"
-            stepResult.success -> "成功，继续执行"
-            else -> "失败"
-        }
-    }
-
-    private fun formatLogSection(title: String, content: String, maxLength: Int): String {
-        val compact = compactLogText(content)
-        val preview = if (compact.length > maxLength) {
-            compact.take(maxLength).trimEnd() + "..."
-        } else {
-            compact
-        }
-        return if (preview.isBlank()) {
-            "$title: 无"
-        } else {
-            "$title: $preview"
-        }
-    }
-
-    private fun compactLogText(text: String): String {
-        return text
-            .lineSequence()
-            .map { it.trim() }
-            .filter { it.isNotBlank() }
-            .joinToString(" ")
-    }
-    
     private fun resetStepCount() {
         currentStepCount = 0
     }
@@ -1261,8 +1320,7 @@ class MainActivity : AppCompatActivity() {
             setBackgroundColor(ContextCompat.getColor(this@MainActivity, R.color.main_surface_variant))
             isClickable = true
             setOnClickListener {
-                binding.etTask.setText(entry.taskGoal)
-                Toast.makeText(this@MainActivity, "已填入历史任务", Toast.LENGTH_SHORT).show()
+                openTaskTrace(entry)
             }
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
@@ -1271,6 +1329,14 @@ class MainActivity : AppCompatActivity() {
                 bottomMargin = dp(8)
             }
         }
+    }
+
+    private fun openTaskTrace(entry: TaskHistoryEntry) {
+        val intent = Intent(this, TaskTraceActivity::class.java).apply {
+            putExtra(TaskTraceActivity.EXTRA_TRACE_SESSION_ID, entry.traceSessionId)
+            putExtra(TaskTraceActivity.EXTRA_TASK_GOAL, entry.taskGoal)
+        }
+        startActivity(intent)
     }
 
     private fun dp(value: Int): Int {
@@ -1388,102 +1454,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun getSystemPrompt(): String {
-        // 获取屏幕尺寸用于提示词
-        val displayMetrics = resources.displayMetrics
-        val gestureBounds = PhoneAgentAccessibilityService.getInstance()?.getGestureDisplayBounds()
-        val screenWidth = gestureBounds?.width ?: displayMetrics.widthPixels
-        val screenHeight = gestureBounds?.height ?: displayMetrics.heightPixels
-        val coordinateSource = gestureBounds?.source ?: "displayMetrics"
-        
-        // 获取当前日期
-        val calendar = java.util.Calendar.getInstance()
-        val weekday = when (calendar.get(java.util.Calendar.DAY_OF_WEEK)) {
-            java.util.Calendar.MONDAY -> "星期一"
-            java.util.Calendar.TUESDAY -> "星期二"
-            java.util.Calendar.WEDNESDAY -> "星期三"
-            java.util.Calendar.THURSDAY -> "星期四"
-            java.util.Calendar.FRIDAY -> "星期五"
-            java.util.Calendar.SATURDAY -> "星期六"
-            java.util.Calendar.SUNDAY -> "星期日"
-            else -> ""
-        }
-        val formattedDate = "${calendar.get(java.util.Calendar.YEAR)}年${calendar.get(java.util.Calendar.MONTH) + 1}月${calendar.get(java.util.Calendar.DAY_OF_MONTH)}日 $weekday"
-        
-        // 获取当前选择的模式
-        val selectedMode = getSelectedMode()
-        val modeDescription = when (selectedMode) {
-            Mode.VISION -> "视觉模式：你将收到屏幕截图，通过分析图片内容来理解屏幕状态。"
-            Mode.ACCESSIBILITY -> "无障碍模式：你将收到屏幕的结构化文本内容（包括所有可见文本、按钮、输入框等控件信息及其坐标），通过分析这些文本和控件信息来理解屏幕状态。注意：坐标是相对坐标（0-1000），可以直接使用；状态栏高度已经包含在坐标基准中，不要额外下移或补偿。"
-            Mode.HYBRID -> "混合模式：你将同时收到屏幕截图和结构化文本内容，结合两种信息来理解屏幕状态。结构化坐标可以直接点击，状态栏高度已经包含在坐标基准中，不要额外下移或补偿。"
-        }
-        
-        return """
-            日期: $formattedDate | 屏幕: ${screenWidth}x${screenHeight}($coordinateSource) | 坐标: 0-1000(相对，完整屏幕左上角为0,0，状态栏已包含)
-            
-            运行模式: $modeDescription
-            
-            你是一个Android操作助手，可以根据操作历史和当前屏幕状态执行一系列操作来完成任务。
-            你必须严格按照要求输出以下格式：
-            <answer>{action}</answer>
-            其中：
-            - {action} 是本次执行的具体操作指令，必须严格遵循下方定义的指令格式。
-
-            操作指令及其作用如下：
-            - do(action="Launch", app="xxx")  
-                Launch是启动目标app的操作，这比通过主屏幕导航更快。此操作完成后，您将自动收到结果状态的截图。
-            - do(action="Tap", element=[x,y])  
-                Tap是点击操作，点击屏幕上的特定点。可用此操作点击按钮、选择项目、从主屏幕打开应用程序，或与任何可点击的用户界面元素进行交互。坐标系统从左上角 (0,0) 开始到右下角（999,999)结束。此操作完成后，您将自动收到结果状态的截图。
-            - do(action="Tap", element=[x,y], message="重要操作")  
-                基本功能同Tap，点击涉及财产、支付、隐私等敏感按钮时触发。
-            - do(action="Type", text="xxx")  
-                Type是输入操作，在当前聚焦的输入框中输入文本。使用此操作前，请确保输入框已被聚焦（先点击它）。输入的文本将像使用键盘输入一样输入。
-            - do(action="Type_Name", text="xxx")  
-                Type_Name是输入人名的操作，基本功能同Type。
-            - do(action="Interact")  
-                Interact是当有多个满足条件的选项时而触发的交互操作，询问用户如何选择。
-            - do(action="Swipe", start=[x1,y1], end=[x2,y2])  
-                Swipe是滑动操作，通过从起始坐标拖动到结束坐标来执行滑动手势。可用于滚动内容、在屏幕之间导航、下拉通知栏以及项目栏或进行基于手势的导航。坐标系统从左上角 (0,0) 开始到右下角（999,999)结束。滑动持续时间会自动调整以实现自然的移动。此操作完成后，您将自动收到结果状态的截图。
-            - do(action="Note", message="True")  
-                记录当前页面内容以便后续总结。
-            - do(action="Call_API", instruction="xxx")  
-                总结或评论当前页面或已记录的内容。
-            - do(action="Long Press", element=[x,y])  
-                Long Pres是长按操作，在屏幕上的特定点长按指定时间。可用于触发上下文菜单、选择文本或激活长按交互。坐标系统从左上角 (0,0) 开始到右下角（999,999)结束。此操作完成后，您将自动收到结果状态的屏幕截图。
-            - do(action="Double Tap", element=[x,y])  
-                Double Tap在屏幕上的特定点快速连续点按两次。使用此操作可以激活双击交互，如缩放、选择文本或打开项目。坐标系统从左上角 (0,0) 开始到右下角（999,999)结束。此操作完成后，您将自动收到结果状态的截图。
-            - do(action="Take_over", message="xxx")  
-                Take_over是接管操作，表示在登录和验证阶段需要用户协助。
-            - do(action="Back")  
-                导航返回到上一个屏幕或关闭当前对话框。相当于按下 Android 的返回按钮。使用此操作可以从更深的屏幕返回、关闭弹出窗口或退出当前上下文。此操作完成后，您将自动收到结果状态的截图。
-            - do(action="Home") 
-                Home是回到系统桌面的操作，相当于按下 Android 主屏幕按钮。使用此操作可退出当前应用并返回启动器，或从已知状态启动新任务。此操作完成后，您将自动收到结果状态的截图。
-            - do(action="Wait", duration="x seconds")  
-                等待页面加载，x为需要等待多少秒。
-            - finish(message="xxx")  
-                finish是结束任务的操作，表示准确完整完成任务，message是终止信息。 
-
-            必须遵循的规则：
-            1. 在执行任何操作前，先检查当前app是否是目标app，如果不是，先执行 Launch。
-            2. 如果进入到了无关页面，先执行 Back。如果执行Back后页面没有变化，请点击页面左上角的返回键进行返回，或者右上角的X号关闭。
-            3. 如果页面未加载出内容，最多连续 Wait 三次，否则执行 Back重新进入。
-            4. 如果页面显示网络问题，需要重新加载，请点击重新加载。
-            5. 如果当前页面找不到目标联系人、商品、店铺等信息，可以尝试 Swipe 滑动查找。
-            6. 遇到价格区间、时间区间等筛选条件，如果没有完全符合的，可以放宽要求。
-            7. 在做小红书总结类任务时一定要筛选图文笔记。
-            8. 购物车全选后再点击全选可以把状态设为全不选，在做购物车任务时，如果购物车里已经有商品被选中时，你需要点击全选后再点击取消全选，再去找需要购买或者删除的商品。
-            9. 在做外卖任务时，如果相应店铺购物车里已经有其他商品你需要先把购物车清空再去购买用户指定的外卖。
-            10. 在做点外卖任务时，如果用户需要点多个外卖，请尽量在同一店铺进行购买，如果无法找到可以下单，并说明某个商品未找到。
-            11. 请严格遵循用户意图执行任务，用户的特殊要求可以执行多次搜索，滑动查找。比如（i）用户要求点一杯咖啡，要咸的，你可以直接搜索咸咖啡，或者搜索咖啡后滑动查找咸的咖啡，比如海盐咖啡。（ii）用户要找到XX群，发一条消息，你可以先搜索XX群，找不到结果后，将"群"字去掉，搜索XX重试。（iii）用户要找到宠物友好的餐厅，你可以搜索餐厅，找到筛选，找到设施，选择可带宠物，或者直接搜索可带宠物，必要时可以使用AI搜索。
-            12. 在选择日期时，如果原滑动方向与预期日期越来越远，请向反方向滑动查找。
-            13. 执行任务过程中如果有多个可选择的项目栏，请逐个查找每个项目栏，直到完成任务，一定不要在同一项目栏多次查找，从而陷入死循环。
-            14. 在执行下一步操作前请一定要检查上一步的操作是否生效，如果点击没生效，可能因为app反应较慢，请先稍微等待一下，如果还是不生效请调整一下点击位置重试，如果仍然不生效请跳过这一步继续任务，并在finish message说明点击不生效。
-            15. 在执行任务中如果遇到滑动不生效的情况，请调整一下起始点位置，增大滑动距离重试，如果还是不生效，有可能是已经滑到底了，请继续向反方向滑动，直到顶部或底部，如果仍然没有符合要求的结果，请跳过这一步继续任务，并在finish message说明但没找到要求的项目。
-            16. 在做游戏任务时如果在战斗页面如果有自动战斗一定要开启自动战斗，如果多轮历史状态相似要检查自动战斗是否开启。
-            17. 如果没有合适的搜索结果，可能是因为搜索页面不对，请返回到搜索页面的上一级尝试重新搜索，如果尝试三次返回上一级搜索后仍然没有符合要求的结果，执行 finish(message="原因")。
-            18. 在结束任务前请一定要仔细检查任务是否完整准确的完成，如果出现错选、漏选、多选的情况，请返回之前的步骤进行纠正。
-            19. 必须确认用户的最终目标完成才可以使用finish，否则禁止使用finish
-            20. 禁止输出<answer>{action}</answer>以外的任何内容
-        """.trimIndent()
+        return SystemPromptBuilder.build(this, getSelectedMode())
     }
 
     /**
@@ -1720,6 +1691,22 @@ class MainActivity : AppCompatActivity() {
     private fun saveTaskToPrefs(task: String) {
         val prefs = getSharedPreferences("phone_agent_settings", MODE_PRIVATE)
         prefs.edit().putString("last_task", task).apply()
+    }
+
+    private fun handleTaskIntent(intent: Intent?) {
+        val task = intent
+            ?.getStringExtra(EXTRA_TASK_DESCRIPTION)
+            ?.trim()
+            .orEmpty()
+        if (task.isBlank()) {
+            return
+        }
+
+        binding.etTask.setText(task)
+        binding.etTask.setSelection(task.length)
+        saveTaskToPrefs(task)
+        Toast.makeText(this, "已填入任务描述", Toast.LENGTH_SHORT).show()
+        intent?.removeExtra(EXTRA_TASK_DESCRIPTION)
     }
 
     /**

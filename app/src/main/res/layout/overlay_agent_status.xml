@@ -50,6 +50,135 @@
         android:textSize="12sp" />
 
     <LinearLayout
+        android:id="@+id/llOverlayQuickAsk"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="10dp"
+        android:orientation="vertical"
+        android:visibility="gone">
+
+        <EditText
+            android:id="@+id/etOverlayTask"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="问当前页面..."
+            android:inputType="textMultiLine"
+            android:maxLines="3"
+            android:minLines="2"
+            android:textColor="@android:color/white"
+            android:textColorHint="#99D8E6F2"
+            android:textSize="13sp" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:orientation="horizontal">
+
+            <Button
+                android:id="@+id/btnOverlayStart"
+                android:layout_width="0dp"
+                android:layout_height="40dp"
+                android:layout_marginEnd="8dp"
+                android:layout_weight="1"
+                android:text="开始"
+                android:textAllCaps="false" />
+
+            <Button
+                android:id="@+id/btnOverlayClose"
+                android:layout_width="0dp"
+                android:layout_height="40dp"
+                android:layout_weight="1"
+                android:text="关闭"
+                android:textAllCaps="false" />
+        </LinearLayout>
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/llOverlayTeaching"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="10dp"
+        android:orientation="vertical"
+        android:visibility="gone">
+
+        <LinearLayout
+            android:id="@+id/groupTeachInputs"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <EditText
+                android:id="@+id/etTeachGoal"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="示教目标..."
+                android:inputType="textMultiLine"
+                android:maxLines="2"
+                android:minLines="1"
+                android:textColor="@android:color/white"
+                android:textColorHint="#99D8E6F2"
+                android:textSize="13sp" />
+
+            <EditText
+                android:id="@+id/etTeachStepNote"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:hint="这一步做了什么..."
+                android:inputType="textMultiLine"
+                android:maxLines="3"
+                android:minLines="2"
+                android:textColor="@android:color/white"
+                android:textColorHint="#99D8E6F2"
+                android:textSize="13sp" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:orientation="horizontal">
+
+            <Button
+                android:id="@+id/btnTeachRecordStep"
+                android:layout_width="0dp"
+                android:layout_height="40dp"
+                android:layout_marginEnd="6dp"
+                android:layout_weight="1"
+                android:text="记录"
+                android:textAllCaps="false" />
+
+            <Button
+                android:id="@+id/btnTeachEdit"
+                android:layout_width="0dp"
+                android:layout_height="40dp"
+                android:layout_marginEnd="6dp"
+                android:layout_weight="1"
+                android:text="操作"
+                android:textAllCaps="false" />
+
+            <Button
+                android:id="@+id/btnTeachFinish"
+                android:layout_width="0dp"
+                android:layout_height="40dp"
+                android:layout_marginEnd="6dp"
+                android:layout_weight="1"
+                android:text="完成"
+                android:textAllCaps="false" />
+
+            <Button
+                android:id="@+id/btnTeachCancel"
+                android:layout_width="0dp"
+                android:layout_height="40dp"
+                android:layout_weight="1"
+                android:text="取消"
+                android:textAllCaps="false" />
+        </LinearLayout>
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/rowOverlayActions"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="12dp"

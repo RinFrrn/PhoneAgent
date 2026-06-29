@@ -6,9 +6,11 @@ import com.mobileagent.phoneagent.harness.runtime.StepStatus
 import com.mobileagent.phoneagent.harness.trace.SessionTrace
 import com.mobileagent.phoneagent.harness.trace.StepTrace
 import com.mobileagent.phoneagent.harness.verify.VerificationResult
+import com.mobileagent.phoneagent.model.ContentItem
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class TracePathSummarizerTest {
@@ -77,6 +79,40 @@ class TracePathSummarizerTest {
         assertNotNull(skill.caution)
     }
 
+    @Test
+    fun successfulTraceStoresSemanticAnchorsAndVerificationSignals() {
+        val session = sessionTrace(
+            success = true,
+            steps = listOf(
+                reusableStep(
+                    stepIndex = 1,
+                    actionJson = """{"_metadata":"do","action":"Tap","element":[120,240],"message":"点击搜索框"}""",
+                    before = observation(texts = listOf("首页", "搜索")),
+                    after = observation(texts = listOf("搜索", "取消"))
+                ),
+                reusableStep(
+                    stepIndex = 2,
+                    actionJson = """{"_metadata":"do","action":"Type","text":"咖啡"}""",
+                    before = observation(texts = listOf("搜索", "取消")),
+                    after = observation(texts = listOf("搜索", "咖啡", "取消"))
+                )
+            )
+        )
+
+        val skill = summarizer.summarize(session)
+
+        assertNotNull(skill)
+        val tapStep = skill!!.steps[0]
+        assertTrue(tapStep.semanticAnchors.orEmpty().any { it.type == SemanticAnchorType.ACTION_MESSAGE && it.value == "点击搜索框" })
+        assertTrue(tapStep.semanticAnchors.orEmpty().any { it.type == SemanticAnchorType.SCREEN_TEXT && it.value == "搜索" })
+        assertTrue(tapStep.verificationSignals.orEmpty().any { it.type == VerificationSignalType.VISIBLE_TEXT_APPEARED && it.value == "取消" })
+
+        val typeStep = skill.steps[1]
+        assertTrue(typeStep.semanticAnchors.orEmpty().any { it.type == SemanticAnchorType.INPUT_TEXT && it.value == "咖啡" })
+        assertTrue(typeStep.verificationSignals.orEmpty().any { it.type == VerificationSignalType.INPUT_TEXT_VISIBLE && it.value == "咖啡" })
+        assertTrue(typeStep.recoveryHints.orEmpty().any { it.contains("输入后检查输入内容") })
+    }
+
     private fun sessionTrace(
         success: Boolean?,
         steps: List<StepTrace>
@@ -94,12 +130,17 @@ class TracePathSummarizerTest {
         )
     }
 
-    private fun reusableStep(stepIndex: Int, actionJson: String): StepTrace {
+    private fun reusableStep(
+        stepIndex: Int,
+        actionJson: String,
+        before: Observation = observation(),
+        after: Observation = observation()
+    ): StepTrace {
         return StepTrace(
             stepIndex = stepIndex,
             timestamp = stepIndex.toLong(),
             status = if (stepIndex == 3) StepStatus.FINISHED else StepStatus.EXECUTED,
-            observationBefore = observation(),
+            observationBefore = before,
             decision = null,
             execution = ExecutionResult(
                 success = true,
@@ -107,7 +148,7 @@ class TracePathSummarizerTest {
                 message = "ok",
                 actionJson = actionJson
             ),
-            observationAfter = observation(),
+            observationAfter = after,
             verification = VerificationResult(
                 passed = true,
                 confidence = 0.9f,
@@ -139,11 +180,11 @@ class TracePathSummarizerTest {
         )
     }
 
-    private fun observation(): Observation {
+    private fun observation(texts: List<String> = emptyList()): Observation {
         return Observation(
             currentApp = "微信",
             currentPackage = "com.tencent.mm",
-            contentItems = emptyList()
+            contentItems = texts.map { ContentItem(type = "text", text = it) }
         )
     }
 }
