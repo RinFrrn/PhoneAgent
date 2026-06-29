@@ -56,6 +56,9 @@ class ResponseActionParser {
             }
             code.contains("do(") -> {
                 json.put("_metadata", "do")
+                putOptionalArgument(json, code, "purpose")
+                putOptionalArgument(json, code, "message")
+                putOptionalArgument(json, code, "instruction")
                 val actionMatch = """action=["']([^"']+)["']""".toRegex().find(code)
                 if (actionMatch != null) {
                     val action = actionMatch.groupValues[1]
@@ -111,5 +114,12 @@ class ResponseActionParser {
         }
 
         return json.toString()
+    }
+
+    private fun putOptionalArgument(json: JSONObject, code: String, key: String) {
+        val match = Regex("""$key=["']([^"']+)["']""").find(code)
+        if (match != null) {
+            json.put(key, match.groupValues[1])
+        }
     }
 }

@@ -11,6 +11,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.media.projection.MediaProjection
 import android.util.Log
+import com.mobileagent.phoneagent.TaskLogFormatter
 import com.mobileagent.phoneagent.action.ActionHandler
 import com.mobileagent.phoneagent.harness.act.AppLaunchController
 import com.mobileagent.phoneagent.harness.act.DefaultActionExecutor
@@ -283,11 +284,17 @@ class PhoneAgent(
     }
 
     private fun HarnessStepRecord.toStepResult(): StepResult {
+        val actionJson = decision?.actionJson ?: ""
+        val purpose = TaskLogFormatter.summarizeStepPurpose(
+            actionJson = actionJson,
+            thinking = decision?.thinking ?: errorMessage,
+            executionMessage = execution?.message ?: errorMessage
+        )
         return StepResult(
             success = execution?.success ?: false,
             finished = status == StepStatus.FINISHED,
             thinking = decision?.thinking ?: (errorMessage ?: "步骤执行失败"),
-            action = decision?.actionJson ?: "",
+            action = actionJson,
             message = execution?.message ?: errorMessage,
             stepIndex = stepIndex,
             status = status.name,
@@ -296,7 +303,8 @@ class PhoneAgent(
             verificationSummary = verification?.let {
                 "passed=${it.passed}, confidence=${it.confidence}, reason=${it.reason}"
             },
-            failureType = execution?.failureType?.name
+            failureType = execution?.failureType?.name,
+            purpose = purpose
         )
     }
 
@@ -316,7 +324,8 @@ data class StepResult(
     val rawResponse: String? = null,
     val currentApp: String? = null,
     val verificationSummary: String? = null,
-    val failureType: String? = null
+    val failureType: String? = null,
+    val purpose: String? = null
 )
 
 data class TaskOutcome(

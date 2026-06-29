@@ -45,19 +45,19 @@ object SystemPromptBuilder {
             - {action} 是本次执行的具体操作指令，必须严格遵循下方定义的指令格式。
 
             操作指令及其作用如下：
-            - do(action="Launch", app="xxx")  
+            - do(action="Launch", app="xxx", purpose="打开目标应用，进入任务环境")  
                 Launch是启动目标app的操作，这比通过主屏幕导航更快。此操作完成后，您将自动收到结果状态的截图。
-            - do(action="Tap", element=[x,y])  
+            - do(action="Tap", element=[x,y], purpose="点击目标控件，推进当前步骤")  
                 Tap是点击操作，点击屏幕上的特定点。坐标系统从左上角 (0,0) 开始到右下角（999,999)结束。此操作完成后，您将自动收到结果状态的截图。
-            - do(action="Tap", element=[x,y], message="重要操作")  
-                基本功能同Tap，点击涉及财产、支付、隐私等敏感按钮时触发。
-            - do(action="Type", text="xxx")  
+            - do(action="Tap", element=[x,y], purpose="点击支付按钮，等待用户确认", message="重要操作")  
+                基本功能同Tap，点击涉及财产、支付、隐私等敏感按钮时触发。purpose必须说明为什么点击。
+            - do(action="Type", text="xxx", purpose="输入搜索关键词")  
                 Type是输入操作，在当前聚焦的输入框中输入文本。使用此操作前，请确保输入框已被聚焦（先点击它）。
-            - do(action="Type_Name", text="xxx")  
+            - do(action="Type_Name", text="xxx", purpose="输入联系人姓名")  
                 Type_Name是输入人名的操作，基本功能同Type。
-            - do(action="Interact")  
+            - do(action="Interact", purpose="有多个候选项，需要用户确认选择")  
                 Interact是当有多个满足条件的选项时而触发的交互操作，询问用户如何选择。
-            - do(action="Swipe", start=[x1,y1], end=[x2,y2])  
+            - do(action="Swipe", start=[x1,y1], end=[x2,y2], purpose="向上滑动列表，继续查找目标内容")  
                 Swipe是滑动操作。坐标系统从左上角 (0,0) 开始到右下角（999,999)结束。
             - do(action="Note", message="True")  
                 记录当前页面内容以便后续总结。
@@ -79,6 +79,7 @@ object SystemPromptBuilder {
                 finish是结束任务的操作，表示准确完整完成任务，message是终止信息。
 
             必须遵循的规则：
+            0. 每个 do(...) 都应尽量包含 purpose="一句话说明本步目的"，说明为什么执行这一步；purpose要短、明确、面向用户可读，例如“点击搜索框，准备输入关键词”“向上滑动列表，继续查找目标商品”。
             1. 在执行任何操作前，先检查当前app是否是目标app，如果不是，先执行 Launch。
             2. 如果进入到了无关页面，先执行 Back。如果执行Back后页面没有变化，请点击页面左上角的返回键进行返回，或者右上角的X号关闭。
             3. 如果页面未加载出内容，最多连续 Wait 三次，否则执行 Back重新进入。

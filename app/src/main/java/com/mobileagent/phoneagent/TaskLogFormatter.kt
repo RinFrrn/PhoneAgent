@@ -16,13 +16,20 @@ object TaskLogFormatter {
     private const val MESSAGE_PREVIEW_LENGTH = 500
 
     fun formatLiveStep(step: StepResult): String {
+        val purpose = step.purpose
+            ?: summarizeStepPurpose(
+                actionJson = step.action,
+                thinking = step.thinking,
+                executionMessage = step.message
+            )
         return buildString {
             appendLine("──── 步骤 ${step.stepIndex ?: "?"} · ${step.status ?: formatStepStatus(step.success, step.finished)} ────")
+            appendLine("本步目的: $purpose")
             step.currentApp?.takeIf { it.isNotBlank() }?.let { appendLine("当前应用: $it") }
             appendLogSection("模型思考", step.thinking, THINKING_PREVIEW_LENGTH)
             step.rawResponse?.let { appendLogSection("模型输出", it, RAW_RESPONSE_PREVIEW_LENGTH) }
             appendLogSection("提取动作", step.action, ACTION_PREVIEW_LENGTH)
-            appendLine("目的注释: ${describeActionPurpose(step.action)}")
+            appendLine("动作说明: ${describeActionPurpose(step.action)}")
             step.message?.let { appendLogSection("执行结果", it, MESSAGE_PREVIEW_LENGTH) }
             step.verificationSummary?.let { appendLine("验证结果: $it") }
             step.failureType?.let { appendLine("失败类型: $it") }
@@ -54,8 +61,15 @@ object TaskLogFormatter {
     }
 
     fun formatTraceStep(step: StepTrace): String {
+        val actionJson = step.decision?.actionJson.orEmpty()
+        val purpose = summarizeStepPurpose(
+            actionJson = actionJson,
+            thinking = step.decision?.thinking,
+            executionMessage = step.execution?.message
+        )
         return buildString {
             appendLine("──── 步骤 ${step.stepIndex} · ${step.status} ────")
+            appendLine("本步目的: $purpose")
             step.observationBefore.currentApp?.takeIf { it.isNotBlank() }?.let {
                 appendLine("观察应用: $it")
             }
@@ -69,7 +83,7 @@ object TaskLogFormatter {
                 appendLogSection("模型思考", decision.thinking, THINKING_PREVIEW_LENGTH)
                 appendLogSection("模型输出", decision.rawResponse, RAW_RESPONSE_PREVIEW_LENGTH)
                 appendLogSection("提取动作", decision.actionJson, ACTION_PREVIEW_LENGTH)
-                appendLine("目的注释: ${describeActionPurpose(decision.actionJson)}")
+                appendLine("动作说明: ${describeActionPurpose(decision.actionJson)}")
             } ?: appendLine("模型输出: 无")
             step.execution?.let { execution ->
                 execution.message?.let { appendLogSection("执行结果", it, MESSAGE_PREVIEW_LENGTH) }
@@ -91,6 +105,56 @@ object TaskLogFormatter {
             step.errorMessage?.let { appendLine("错误: $it") }
             step.failureType?.let { appendLine("失败类型: $it") }
         }.trimEnd()
+    }
+
+    fun summarizeStepPurpose(
+        actionJson: String,
+        thinking: String? = null,
+        executionMessage: String? = null
+    ): String {
+        val json = runCatching { JSONObject(actionJson) }.getOrNull()
+            ?: return sentenceFromText(executionMessage)
+                ?: sentenceFromText(thinking)
+                ?: "解析下一步操作，等待获取可执行动作。"
+        explicitPurpose(json)?.let { return it }
+        if (json.optString("_metadata") == "finish") {
+            return "结束任务并汇报结果。"
+        }
+        if (json.optString("_metadata") != "do") {
+            return sentenceFromText(thinking) ?: "执行模型返回的动作，继续推进任务。"
+        }
+        return when (val action = json.optString("action")) {
+            "Tap", "Click" -> summarizeTapPurpose(json)
+            "Long Press" -> summarizePointPurpose("长按", json)
+            "Double Tap" -> summarizePointPurpose("双击", json)
+            "Swipe" -> summarizeSwipePurpose(json)
+            "Type", "Type_Name" -> {
+                val text = json.optString("text", "")
+                if (text.isBlank()) {
+                    "在当前输入框输入内容，推进任务。"
+                } else {
+                    "输入“${text.take(24)}”，完成当前输入框内容填写。"
+                }
+            }
+            "Launch" -> {
+                val app = json.optString("app", "").ifBlank { "目标应用" }
+                "打开$app，进入任务所需应用环境。"
+            }
+            "Back" -> "返回上一层，离开当前无关页面或关闭弹窗。"
+            "Home" -> "回到桌面，重置当前应用导航上下文。"
+            "Wait" -> "等待页面加载或操作结果稳定。"
+            "Take_over" -> "请求用户介入处理登录、验证或敏感操作。"
+            "Note" -> "记录当前页面信息，供后续总结或判断使用。"
+            "Call_API" -> {
+                val instruction = json.optString("instruction", "")
+                if (instruction.isBlank()) "调用外部能力处理当前信息。" else instruction.toPurposeSentence()
+            }
+            "Interact" -> "当前有多个候选项，请用户确认下一步选择。"
+            else -> {
+                val fallback = sentenceFromText(thinking)
+                fallback ?: "执行 $action 动作，目标语义不明确，需结合页面上下文确认。"
+            }
+        }
     }
 
     fun describeActionPurpose(actionJson: String): String {
@@ -122,6 +186,57 @@ object TaskLogFormatter {
             "Call_API" -> "调用外部能力: ${json.optString("instruction", "未提供说明")}。"
             "Interact" -> "交互式处理当前页面；复用前需要结合页面上下文确认具体动作。"
             else -> "未知动作 $action；复用 skill 时需要人工补充动作目的。"
+        }
+    }
+
+    private fun explicitPurpose(json: JSONObject): String? {
+        return listOf("purpose", "message", "instruction")
+            .firstNotNullOfOrNull { key ->
+                json.optString(key, "")
+                    .takeIf { it.isNotBlank() && it != "重要操作" && it != "True" }
+                    ?.toPurposeSentence()
+            }
+    }
+
+    private fun summarizeTapPurpose(json: JSONObject): String {
+        val point = readPoint(json, "element")
+        val target = json.optString("target", "").ifBlank {
+            json.optString("text", "")
+        }
+        if (target.isNotBlank()) {
+            return "点击$target，推进当前操作。"
+        }
+        return if (point != null) {
+            "点击坐标 (${point.first}, ${point.second})，尝试打开目标控件。"
+        } else {
+            "点击当前目标控件，推进任务。"
+        }
+    }
+
+    private fun summarizePointPurpose(label: String, json: JSONObject): String {
+        val point = readPoint(json, "element")
+        return if (point != null) {
+            "$label 坐标 (${point.first}, ${point.second})，操作目标控件。"
+        } else {
+            "$label 目标控件，推进当前步骤。"
+        }
+    }
+
+    private fun summarizeSwipePurpose(json: JSONObject): String {
+        val start = readPoint(json, "start")
+        val end = readPoint(json, "end")
+        if (start == null || end == null) {
+            return "滑动当前页面，继续查找目标内容。"
+        }
+        val dx = end.first - start.first
+        val dy = end.second - start.second
+        return when {
+            kotlin.math.abs(dy) >= kotlin.math.abs(dx) && dy < 0 ->
+                "向上滑动列表，继续查找目标内容。"
+            kotlin.math.abs(dy) >= kotlin.math.abs(dx) ->
+                "向下滑动列表，回看上方内容或调整位置。"
+            dx < 0 -> "向左滑动页面，切换到后续内容。"
+            else -> "向右滑动页面，切换到前序内容。"
         }
     }
 
@@ -192,6 +307,27 @@ object TaskLogFormatter {
             .map { it.trim() }
             .filter { it.isNotBlank() }
             .joinToString(" ")
+    }
+
+    private fun sentenceFromText(text: String?): String? {
+        val compact = text?.let(::compactText).orEmpty()
+        if (compact.isBlank()) {
+            return null
+        }
+        return compact
+            .split('。', '！', '？', '.', '!', '?', '\n')
+            .firstOrNull { it.isNotBlank() }
+            ?.trim()
+            ?.take(56)
+            ?.toPurposeSentence()
+    }
+
+    private fun String.toPurposeSentence(): String {
+        val trimmed = trim().trimEnd('。', '.', '；', ';')
+        if (trimmed.isBlank()) {
+            return "继续推进任务。"
+        }
+        return if (trimmed.endsWith("。")) trimmed else "$trimmed。"
     }
 
     private fun formatStepStatus(success: Boolean, finished: Boolean): String {

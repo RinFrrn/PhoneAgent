@@ -1247,7 +1247,21 @@ class MainActivity : AppCompatActivity() {
             stepResult.success -> "步骤成功"
             else -> "步骤失败"
         }
-        val overlayDetail = stepResult.message ?: stepResult.thinking.take(120)
+        val purpose = stepResult.purpose.orEmpty().ifBlank {
+            TaskLogFormatter.summarizeStepPurpose(
+                actionJson = stepResult.action,
+                thinking = stepResult.thinking,
+                executionMessage = stepResult.message
+            )
+        }
+        val failureMessage = stepResult.message
+            ?.takeIf { !stepResult.success && it.isNotBlank() }
+            ?.take(60)
+        val overlayDetail = if (failureMessage == null) {
+            purpose
+        } else {
+            "$purpose 失败信息: $failureMessage"
+        }
         setRecentOverlayResult(overlayStatus, overlayDetail)
         FloatingOverlayService.update(
             context = this,
