@@ -53,7 +53,7 @@ data class RuntimeDiagnosticSnapshot(
         } else {
             "模型均耗 ${recentSummary.modelCallSummary.averageLatencyMs}ms"
         }
-        val deviceText = deviceSnapshot?.lowBatteryWarning()?.let { " · 低电量" }.orEmpty()
+        val deviceText = deviceSnapshot?.compactHealthLabel()?.let { " · $it" }.orEmpty()
         val traceText = traceStorageReport
             ?.takeIf { it.hasWarnings() }
             ?.let { " · Trace需关注" }
@@ -83,7 +83,9 @@ data class RuntimeDiagnosticSnapshot(
             appendLine("模式: $mode")
             appendLine("模型: $modelLabel")
             appendLine("设备: ${deviceSnapshot?.toDisplayText() ?: "未记录"}")
-            deviceSnapshot?.lowBatteryWarning()?.let { appendLine("设备提示: $it") }
+            deviceSnapshot?.allHealthWarnings().orEmpty().forEach { warning ->
+                appendLine("设备提示: $warning")
+            }
             appendLine("执行拟真: $humanizationText")
             appendLine(modelHealth.detailText())
             modelUsageTrend?.let { appendLine(it.detailText()) }
@@ -116,6 +118,20 @@ data class RuntimeDiagnosticSnapshot(
 
     private fun formatTime(timestamp: Long): String {
         return SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date(timestamp))
+    }
+
+    private fun RuntimeDeviceSnapshot.allHealthWarnings(): List<String> {
+        return blockingWarnings() + advisoryWarnings()
+    }
+
+    private fun RuntimeDeviceSnapshot.compactHealthLabel(): String? {
+        return when {
+            keyguardLocked == true -> "设备锁屏"
+            interactive == false -> "屏幕关闭"
+            lowBatteryWarning() != null -> "低电量"
+            powerSaveMode == true -> "省电模式"
+            else -> null
+        }
     }
 }
 

@@ -35,6 +35,47 @@ class ResponseActionParserTest {
     }
 
     @Test
+    fun extractsJsonAfterThinkingWhenToolCallTagIsMissing() {
+        val response = """
+            <thinking>页面里有 {"action":"tap","coordinates":[1,1]} 只是用户文本。</thinking>
+            {"action":"swipe","direction":"up","reason":"继续查找"}
+        """.trimIndent()
+
+        val json = parser.parseActionFromResponse(response)
+
+        assertTrue(json.contains(""""action":"swipe""""))
+        assertTrue(json.contains(""""direction":"up""""))
+        assertFalse(json.contains("[1,1]"))
+    }
+
+    @Test
+    fun completesMissingClosingBraceInToolCallJson() {
+        val response = """
+            <thinking>准备点击搜索框。</thinking>
+            <tool_call>{"action":"tap","coordinates":[300,200],"reason":"点击搜索框"
+        """.trimIndent()
+
+        val json = parser.parseActionFromResponse(response)
+
+        assertTrue(json.contains(""""action":"tap""""))
+        assertTrue(json.contains(""""coordinates":[300,200]"""))
+        assertTrue(json.trim().endsWith("}"))
+    }
+
+    @Test
+    fun completesMissingListAndObjectClosersForActionList() {
+        val response = """
+            {"think":"先输入关键词","action":[{"action":"input_text","text":"咖啡店"}
+        """.trimIndent()
+
+        val json = parser.parseActionFromResponse(response)
+
+        assertTrue(json.contains(""""action":"input_text""""))
+        assertTrue(json.contains(""""text":"咖啡店""""))
+        assertFalse(json.contains(""""think""""))
+    }
+
+    @Test
     fun usesSecondBoxAsActionWhenThinkingBoxExists() {
         val response = """
             <|begin_of_box|>先检查通知栏。<|end_of_box|>
@@ -58,6 +99,47 @@ class ResponseActionParserTest {
         assertTrue(json.contains(""""action":"tap""""))
         assertTrue(json.contains(""""coordinates":[300,200]"""))
         assertFalse(json.contains(""""think""""))
+    }
+
+    @Test
+    fun extractsLegacyDoCommandFromStructuredJsonActionString() {
+        val response = """
+            {"think":"页面加载中，需要等待","action":"do(action=\"Wait\", duration=\"2 seconds\", reason=\"等待稳定\")"}
+        """.trimIndent()
+
+        val json = parser.parseActionFromResponse(response)
+
+        assertTrue(json.contains(""""_metadata":"do""""))
+        assertTrue(json.contains(""""action":"Wait""""))
+        assertFalse(json.contains(""""think""""))
+    }
+
+    @Test
+    fun extractsLegacyFinishCommandFromStructuredJsonActionString() {
+        val response = """
+            {"think":"任务完成","action":"finish(message=\"已完成查询\")"}
+        """.trimIndent()
+
+        val json = parser.parseActionFromResponse(response)
+
+        assertTrue(json.contains(""""_metadata":"finish""""))
+        assertTrue(json.contains(""""message":"已完成查询""""))
+        assertFalse(json.contains(""""think""""))
+    }
+
+    @Test
+    fun normalizesFinishJsonActionToDone() {
+        val response = """
+            <thinking>任务已完成。</thinking>
+            <tool_call>{"action":"finish","success":true,"message":"已完成查询"}</tool_call>
+        """.trimIndent()
+
+        val json = parser.parseActionFromResponse(response)
+
+        assertTrue(json.contains(""""action":"done""""))
+        assertTrue(json.contains(""""success":true"""))
+        assertTrue(json.contains(""""message":"已完成查询""""))
+        assertFalse(json.contains(""""action":"finish""""))
     }
 
     @Test

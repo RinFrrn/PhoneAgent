@@ -12,6 +12,12 @@ class ResponseActionParser {
             logDebug("从动作段提取到 JSON: $json")
             return json
         }
+        completeTruncatedJson(actionSegment)?.let { completed ->
+            normalizeJsonAction(completed)?.let { json ->
+                logDebug("补全截断 JSON 后提取到动作: $json")
+                return json
+            }
+        }
 
         extractFirstValidJson(actionSegment)?.let { json ->
             logDebug("从动作段提取到完整 JSON: $json")
@@ -28,9 +34,36 @@ class ResponseActionParser {
     private fun extractActionSegment(response: String): String {
         extractTagContent(response, "tool_call")?.let { return it }
         extractTagContent(response, "answer")?.let { return it }
+        extractJsonAfterThinking(response)?.let { return it }
         extractBoxAction(response)?.let { return it }
         extractMultilineAction(response)?.let { return it }
         return response
+    }
+
+    private fun extractJsonAfterThinking(response: String): String? {
+        val thinkingEnd = response.indexOf("</thinking>")
+        if (thinkingEnd != -1) {
+            return response.substring(thinkingEnd + "</thinking>".length)
+                .trim()
+                .takeIf { it.contains("{") }
+        }
+
+        val thinkEnd = response.indexOf("</think>")
+        if (thinkEnd != -1) {
+            return response.substring(thinkEnd + "</think>".length)
+                .trim()
+                .takeIf { it.contains("{") }
+        }
+
+        val thinkingStart = response.indexOf("<thinking>")
+        if (thinkingStart != -1) {
+            val jsonStart = response.indexOf("{", thinkingStart + "<thinking>".length)
+            if (jsonStart != -1) {
+                return response.substring(jsonStart).trim()
+            }
+        }
+
+        return null
     }
 
     private fun extractTagContent(response: String, tagName: String): String? {
@@ -92,20 +125,74 @@ class ResponseActionParser {
             return json
         }
         extractJsonValue(json, "action")?.let { actionValue ->
+            val normalizedJson = normalizeTerminalAlias(json, actionValue)
             return when {
                 actionValue.startsWith("{") -> actionValue
                 actionValue.startsWith("[") -> firstJsonAction(actionValue)
                 actionValue.startsWith("\"") -> {
-                    if (hasOtherFields(json, "action")) {
-                        json
+                    val actionText = unquote(actionValue).trim()
+                    if (looksLikeLegacyActionCommand(actionText)) {
+                        parseActionFromCode(actionText)
+                    } else if (hasOtherFields(normalizedJson, "action")) {
+                        normalizedJson
                     } else {
-                        parseActionFromCode(unquote(actionValue))
+                        parseActionFromCode(actionText)
                     }
                 }
-                else -> json
+                else -> normalizedJson
             }
         }
         return null
+    }
+
+    private fun looksLikeLegacyActionCommand(actionText: String): Boolean {
+        return actionText.startsWith("do(") || actionText.startsWith("finish(")
+    }
+
+    private fun normalizeTerminalAlias(json: String, actionValue: String): String {
+        if (!actionValue.equals("\"finish\"", ignoreCase = true)) {
+            return json
+        }
+        return json.replaceFirst(
+            Regex(""""action"\s*:\s*"finish"""", RegexOption.IGNORE_CASE),
+            """"action":"done""""
+        )
+    }
+
+    private fun completeTruncatedJson(code: String): String? {
+        val trimmed = code.trim()
+        if (!trimmed.startsWith("{")) {
+            return null
+        }
+        val closers = mutableListOf<Char>()
+        var inString = false
+        var escaped = false
+        for (char in trimmed) {
+            if (inString) {
+                if (escaped) {
+                    escaped = false
+                } else if (char == '\\') {
+                    escaped = true
+                } else if (char == '"') {
+                    inString = false
+                }
+                continue
+            }
+            when (char) {
+                '"' -> inString = true
+                '{' -> closers.add('}')
+                '[' -> closers.add(']')
+                '}', ']' -> {
+                    if (closers.isEmpty() || closers.removeAt(closers.lastIndex) != char) {
+                        return null
+                    }
+                }
+            }
+        }
+        if (inString || closers.isEmpty()) {
+            return null
+        }
+        return trimmed + closers.asReversed().joinToString("")
     }
 
     private fun hasOtherFields(json: String, ignoredKey: String): Boolean {

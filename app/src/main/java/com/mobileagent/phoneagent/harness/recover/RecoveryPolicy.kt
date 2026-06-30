@@ -43,6 +43,10 @@ class DefaultRecoveryPolicy {
             FailureType.APP_LAUNCH_TARGET_NOT_REACHED -> RecoveryDecision(
                 userMessage = "已发送应用跳转请求，但未到达目标应用。请结合当前页面重新判断，不要重复后台启动。"
             )
+            FailureType.SENSITIVE_CONFIRMATION_REQUIRED -> RecoveryDecision(
+                requiresUserTakeover = true,
+                userMessage = "检测到敏感确认、登录、验证码、支付或订单页面。请用户确认页面内容并手动处理敏感步骤，完成后再继续。"
+            )
             FailureType.ACTION_NOT_EFFECTIVE -> RecoveryDecision(
                 userMessage = buildString {
                     append("上一步动作已执行，但页面没有产生可观察变化，疑似点击/滑动无效。")

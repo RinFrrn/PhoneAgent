@@ -1,6 +1,7 @@
 package com.mobileagent.phoneagent.harness.runtime
 
 import android.content.Context
+import android.os.SystemClock
 import android.util.Log
 import com.mobileagent.phoneagent.action.ActionResult
 import com.mobileagent.phoneagent.agent.AgentRuntimeState
@@ -21,6 +22,7 @@ import com.mobileagent.phoneagent.harness.plan.TaskPreprocessor
 import com.mobileagent.phoneagent.harness.recover.FailureClassifier
 import com.mobileagent.phoneagent.harness.recover.DefaultRecoveryPolicy
 import com.mobileagent.phoneagent.harness.recover.FailureType
+import com.mobileagent.phoneagent.harness.recover.RecoveryDecision
 import com.mobileagent.phoneagent.harness.spec.TaskSpec
 import com.mobileagent.phoneagent.harness.trace.StepTrace
 import com.mobileagent.phoneagent.harness.trace.TaskHistoryStatus
@@ -92,6 +94,11 @@ class HarnessRuntime(
         try {
             while (stateMachine.isActive() && session.stepCount < taskSpec.maxSteps) {
                 val stepIndex = session.nextStepIndex()
+                val stepStartedAt = SystemClock.elapsedRealtime()
+                var observationMs = 0L
+                var planningMs = 0L
+                var executionMs = 0L
+                var verificationMs = 0L
                 val stepWarnings = RuntimeStepHealthMonitor.warningsForStep(stepIndex, taskSpec.maxSteps)
                 Log.d(tag, "执行 Harness 步骤: $stepIndex/${taskSpec.maxSteps}")
 
@@ -105,8 +112,15 @@ class HarnessRuntime(
                         phase = RuntimePhase.OBSERVING
                     )
                 )
+                val observationStartedAt = SystemClock.elapsedRealtime()
                 val observation = observationCollector.collect()
+                observationMs = elapsedSince(observationStartedAt)
                 if (observation.failureMessage != null) {
+                    val timing = RuntimeStepTiming(
+                        totalMs = elapsedSince(stepStartedAt),
+                        observationMs = observationMs
+                    )
+                    val runtimeWarnings = stepWarnings + timing.warnings()
                     val record = HarnessStepRecord(
                         stepIndex = stepIndex,
                         observation = observation,
@@ -115,7 +129,8 @@ class HarnessRuntime(
                         verification = null,
                         status = StepStatus.OBSERVATION_FAILED,
                         errorMessage = observation.failureMessage,
-                        runtimeWarnings = stepWarnings
+                        timing = timing,
+                        runtimeWarnings = runtimeWarnings
                     )
                     traceStore.appendStep(
                         traceSessionId,
@@ -130,7 +145,8 @@ class HarnessRuntime(
                             verification = null,
                             errorMessage = observation.failureMessage,
                             failureType = failureClassifier.classifyObservationFailure(observation.failureMessage),
-                            runtimeWarnings = stepWarnings
+                            timing = timing,
+                            runtimeWarnings = runtimeWarnings
                         )
                     )
                     onStepRecord?.invoke(record)
@@ -155,6 +171,7 @@ class HarnessRuntime(
                         phase = RuntimePhase.MODEL_GENERATING
                     )
                 )
+                val planningStartedAt = SystemClock.elapsedRealtime()
                 val decision = try {
                     val preprocessed = if (stepIndex == 1) {
                         taskPreprocessor.preprocess(taskSpec.goal)
@@ -167,6 +184,13 @@ class HarnessRuntime(
                         planner.plan(taskSpec, observation, sessionMemory)
                     }
                 } catch (e: Exception) {
+                    planningMs = elapsedSince(planningStartedAt)
+                    val timing = RuntimeStepTiming(
+                        totalMs = elapsedSince(stepStartedAt),
+                        observationMs = observationMs,
+                        planningMs = planningMs
+                    )
+                    val runtimeWarnings = stepWarnings + timing.warnings()
                     val message = "模型请求失败: ${e.message}"
                     val record = HarnessStepRecord(
                         stepIndex = stepIndex,
@@ -176,7 +200,8 @@ class HarnessRuntime(
                         verification = null,
                         status = StepStatus.FAILED,
                         errorMessage = message,
-                        runtimeWarnings = stepWarnings
+                        timing = timing,
+                        runtimeWarnings = runtimeWarnings
                     )
                     traceStore.appendStep(
                         traceSessionId,
@@ -191,7 +216,8 @@ class HarnessRuntime(
                             verification = null,
                             errorMessage = message,
                             failureType = failureClassifier.classifyModelFailure(message),
-                            runtimeWarnings = stepWarnings
+                            timing = timing,
+                            runtimeWarnings = runtimeWarnings
                         )
                     )
                     onStepRecord?.invoke(record)
@@ -205,6 +231,7 @@ class HarnessRuntime(
                     onComplete(TaskOutcome(false, message, traceSessionId))
                     return
                 }
+                planningMs = elapsedSince(planningStartedAt)
 
                 onStatusUpdate?.invoke(
                     RuntimeStatusUpdate(
@@ -217,6 +244,7 @@ class HarnessRuntime(
                         phase = RuntimePhase.EXECUTING
                     )
                 )
+                val executionStartedAt = SystemClock.elapsedRealtime()
                 val execution = actionExecutor.execute(
                     ExecutionRequest(
                         actionJson = decision.actionJson,
@@ -226,6 +254,7 @@ class HarnessRuntime(
                         taskGoal = taskSpec.goal
                     )
                 )
+                executionMs = elapsedSince(executionStartedAt)
 
                 onStatusUpdate?.invoke(
                     RuntimeStatusUpdate(
@@ -234,6 +263,7 @@ class HarnessRuntime(
                         phase = RuntimePhase.VERIFYING
                     )
                 )
+                val verificationStartedAt = SystemClock.elapsedRealtime()
                 val afterObservation = collectPostExecutionObservation(execution)
                 val verification = stepVerifier.verify(
                     before = observation,
@@ -261,19 +291,26 @@ class HarnessRuntime(
                     verification = verification,
                     stagnation = stagnation
                 )
-                val effectiveExecution = execution.copy(
+                var effectiveExecution = execution.copy(
                     success = execution.success && verification.passed,
                     message = effectiveMessage,
                     requiresTakeover = execution.requiresTakeover || stagnationTakeover,
                     failureType = effectiveFailureType
                 )
+                val recoveryDecision = applyRecoveryDecision(taskSpec, observation, effectiveExecution)
+                if (recoveryDecision.requiresUserTakeover || recoveryDecision.userMessage != null) {
+                    effectiveExecution = effectiveExecution.copy(
+                        requiresTakeover = effectiveExecution.requiresTakeover || recoveryDecision.requiresUserTakeover,
+                        message = recoveryDecision.userMessage ?: effectiveExecution.message
+                    )
+                }
 
                 failureTracker.recordActionResult(
                     decision.actionJson,
                     ActionResult(
                         success = effectiveExecution.success,
                         shouldFinish = execution.shouldFinish,
-                        message = effectiveMessage,
+                        message = effectiveExecution.message,
                         requiresTakeover = effectiveExecution.requiresTakeover
                     ),
                     ineffective = stagnation.ineffective
@@ -307,14 +344,23 @@ class HarnessRuntime(
                     decision = decision.actionJson,
                     execution = effectiveExecution
                 )
-                applyRecoveryDecision(taskSpec, observation, effectiveExecution)
+                verificationMs = elapsedSince(verificationStartedAt)
+                val timing = RuntimeStepTiming(
+                    totalMs = elapsedSince(stepStartedAt),
+                    observationMs = observationMs,
+                    planningMs = planningMs,
+                    executionMs = executionMs,
+                    verificationMs = verificationMs
+                )
+                val runtimeWarnings = stepWarnings + timing.warnings()
 
-                if (effectiveExecution.requiresTakeover && effectiveExecution.message != null) {
+                val takeoverMessage = effectiveExecution.message
+                if (effectiveExecution.requiresTakeover && takeoverMessage != null) {
                     stateMachine.markWaitingForUser()
-                    onUserIntervention?.invoke(effectiveExecution.message)
+                    onUserIntervention?.invoke(takeoverMessage)
                     val userResponse = AgentSessionCoordinator.waitForUserConfirmation(timeoutMs = 180_000)
                     sessionMemory.addInterventionMessage(
-                        message = effectiveExecution.message,
+                        message = takeoverMessage,
                         response = userResponse
                     )
                     stateMachine.resumeAfterUserIntervention()
@@ -348,7 +394,8 @@ class HarnessRuntime(
                         } else {
                             null
                         },
-                        runtimeWarnings = stepWarnings
+                        timing = timing,
+                        runtimeWarnings = runtimeWarnings
                     )
                 )
 
@@ -361,7 +408,8 @@ class HarnessRuntime(
                         verification = verification,
                         status = status,
                         errorMessage = if (status == StepStatus.FAILED) effectiveExecution.message else null,
-                        runtimeWarnings = stepWarnings
+                        timing = timing,
+                        runtimeWarnings = runtimeWarnings
                     )
                 )
 
@@ -431,6 +479,10 @@ class HarnessRuntime(
         }
         val warningText = warnings.joinToString("；") { it.message }
         return "$base；$warningText"
+    }
+
+    private fun elapsedSince(startedAt: Long): Long {
+        return (SystemClock.elapsedRealtime() - startedAt).coerceAtLeast(0L)
     }
 
     private suspend fun collectPostExecutionObservation(execution: ExecutionResult): Observation? {
@@ -520,8 +572,8 @@ class HarnessRuntime(
         taskSpec: TaskSpec,
         observation: Observation,
         execution: ExecutionResult
-    ) {
-        val failureType = execution.failureType ?: return
+    ): RecoveryDecision {
+        val failureType = execution.failureType ?: return RecoveryDecision()
         val decision = recoveryPolicy.decide(
             failureType = failureType,
             taskSpec = taskSpec,
@@ -532,6 +584,7 @@ class HarnessRuntime(
         if (decision.stopTask) {
             stateMachine.markFailed()
         }
+        return decision
     }
 
     private fun learnFromSuccessfulTrace(traceSessionId: String) {

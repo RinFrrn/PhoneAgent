@@ -16,7 +16,8 @@ data class TaskPreprocessResult(
     val executor: PreprocessedExecutor,
     val skipLlm: Boolean,
     val confidence: Float,
-    val reason: String
+    val reason: String,
+    val finishAfterExecution: Boolean = skipLlm
 ) {
     fun toPlanDecision(): PlanDecision {
         return PlanDecision(
@@ -26,7 +27,7 @@ data class TaskPreprocessResult(
                 append(actionJson)
             },
             actionJson = actionJson,
-            finishRequested = skipLlm,
+            finishRequested = finishAfterExecution,
             source = PlanDecisionSource.TASK_PREPROCESSOR,
             executor = executor.name,
             taskType = taskType.name,
@@ -43,13 +44,36 @@ class TaskPreprocessor {
             return null
         }
 
+        parseSensitiveOperation(task)?.let { return it }
         parseHome(task)?.let { return it }
         parseBack(task)?.let { return it }
         parseWait(task)?.let { return it }
         parseScreenSnapshot(task)?.let { return it }
         parseLaunch(task)?.let { return it }
+        parseComplexTodo(task)?.let { return it }
 
         return null
+    }
+
+    private fun parseSensitiveOperation(task: String): TaskPreprocessResult? {
+        val matchedKeyword = SENSITIVE_KEYWORDS.firstOrNull { task.contains(it, ignoreCase = true) }
+            ?: return null
+        val question = "检测到任务可能涉及敏感操作（$matchedKeyword）。是否确认继续自动化？"
+        val actionJson = doActionJson(
+            "Ask_User",
+            "question" to question,
+            "options" to listOf("确认继续", "取消任务"),
+            "reason" to "敏感任务需要用户明确确认"
+        )
+        return TaskPreprocessResult(
+            actionJson = actionJson,
+            taskType = PreprocessedTaskType.SYSTEM_COMMAND,
+            executor = PreprocessedExecutor.RULE_ENGINE,
+            skipLlm = true,
+            confidence = 0.96f,
+            reason = "任务预处理命中敏感操作关键词“$matchedKeyword”：先请求用户确认，确认后再交给模型继续原任务。",
+            finishAfterExecution = false
+        )
     }
 
     private fun parseLaunch(task: String): TaskPreprocessResult? {
@@ -83,6 +107,47 @@ class TaskPreprocessor {
         }
 
         return null
+    }
+
+    private fun parseComplexTodo(task: String): TaskPreprocessResult? {
+        val steps = splitComplexTask(task)
+        if (steps.size < COMPLEX_TASK_MIN_STEPS) {
+            return null
+        }
+        val todos = steps.joinToString("\n") { step -> "- [ ] $step" }
+        return TaskPreprocessResult(
+            actionJson = doActionJson(
+                "Note",
+                "todos" to todos,
+                "reason" to "复杂任务先建立可追踪 TODO"
+            ),
+            taskType = PreprocessedTaskType.UI_INTERACTION,
+            executor = PreprocessedExecutor.RULE_ENGINE,
+            skipLlm = true,
+            confidence = 0.82f,
+            reason = "任务预处理识别为 ${steps.size} 步复杂任务：先记录 TODO 计划，下一步交给模型按当前页面继续执行。",
+            finishAfterExecution = false
+        )
+    }
+
+    private fun splitComplexTask(task: String): List<String> {
+        val normalized = task
+            .replace(Regex("""\s+(then|and then|after that|finally)\s+""", RegexOption.IGNORE_CASE), "，")
+            .replace(Regex("""(?:然后|接着|之后|随后|最后|并且|同时|再)"""), "，")
+        return normalized
+            .split(Regex("""[，,。；;]+"""))
+            .map { segment ->
+                segment
+                    .trim()
+                    .removePrefix("先")
+                    .removePrefix("再")
+                    .trim()
+            }
+            .filter { segment ->
+                segment.length >= 2 &&
+                    segment !in setOf("帮我", "请帮我", "麻烦", "我要", "我想")
+            }
+            .take(6)
     }
 
     private fun parseHome(task: String): TaskPreprocessResult? {
@@ -195,9 +260,9 @@ class TaskPreprocessor {
         return null
     }
 
-    private fun doActionJson(action: String, vararg fields: Pair<String, String>): String {
+    private fun doActionJson(action: String, vararg fields: Pair<String, Any>): String {
         val extraFields = fields.joinToString(separator = "") { (key, value) ->
-            "," + quoteJson(key) + ":" + quoteJson(value)
+            "," + quoteJson(key) + ":" + encodeJsonValue(value)
         }
         return """{"_metadata":"do","action":${quoteJson(action)}$extraFields}"""
     }
@@ -223,9 +288,55 @@ class TaskPreprocessor {
         }
     }
 
+    private fun encodeJsonValue(value: Any): String {
+        return when (value) {
+            is String -> quoteJson(value)
+            is List<*> -> value.joinToString(prefix = "[", postfix = "]") { item ->
+                quoteJson(item?.toString().orEmpty())
+            }
+            else -> quoteJson(value.toString())
+        }
+    }
+
     private data class Pattern(
         val value: String,
         val confidence: Float,
         val options: Set<RegexOption> = emptySet()
     )
+
+    private companion object {
+        const val COMPLEX_TASK_MIN_STEPS = 3
+
+        val SENSITIVE_KEYWORDS = listOf(
+            "转账",
+            "付款",
+            "支付",
+            "付钱",
+            "买单",
+            "下单",
+            "提交订单",
+            "立即购买",
+            "充值",
+            "提现",
+            "借款",
+            "贷款",
+            "还款",
+            "输入密码",
+            "密码",
+            "验证码",
+            "登录",
+            "登陆",
+            "人脸",
+            "实名认证",
+            "实名",
+            "绑定银行卡",
+            "解绑银行卡",
+            "修改密码",
+            "注销账号",
+            "删除账号",
+            "银行",
+            "证券",
+            "股票"
+        )
+    }
 }

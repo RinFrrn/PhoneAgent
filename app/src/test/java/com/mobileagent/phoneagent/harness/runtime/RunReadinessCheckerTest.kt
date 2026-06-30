@@ -61,4 +61,66 @@ class RunReadinessCheckerTest {
         assertEquals(listOf("humanization"), report.infos.map { it.id })
         assertEquals("已就绪", report.statusTitle(running = false))
     }
+
+    @Test
+    fun lockedOrSleepingDeviceBecomesRuntimeBlocker() {
+        val report = RunReadinessChecker.evaluate(
+            modelConfigured = true,
+            accessibilityEnabled = true,
+            overlayEnabled = true,
+            notificationEnabled = true,
+            mode = Mode.ACCESSIBILITY,
+            screenCaptureReady = true,
+            humanizationEnabled = false,
+            deviceSnapshot = RuntimeDeviceSnapshot(
+                manufacturer = "Google",
+                model = "Pixel",
+                androidVersion = "15",
+                sdkInt = 35,
+                screenResolution = "1080x2400",
+                interactive = false,
+                keyguardLocked = true,
+                powerSaveMode = false
+            )
+        )
+
+        assertFalse(report.ready)
+        assertEquals(
+            listOf("device_blocker_1", "device_blocker_2"),
+            report.blockers.map { it.id }
+        )
+        assertTrue(report.statusDetail(running = false).contains("设备状态不可执行"))
+    }
+
+    @Test
+    fun lowBatteryAndPowerSaveBecomeDeviceWarnings() {
+        val report = RunReadinessChecker.evaluate(
+            modelConfigured = true,
+            accessibilityEnabled = true,
+            overlayEnabled = true,
+            notificationEnabled = true,
+            mode = Mode.ACCESSIBILITY,
+            screenCaptureReady = true,
+            humanizationEnabled = false,
+            deviceSnapshot = RuntimeDeviceSnapshot(
+                manufacturer = "Google",
+                model = "Pixel",
+                androidVersion = "15",
+                sdkInt = 35,
+                screenResolution = "1080x2400",
+                batteryPercent = 10,
+                charging = false,
+                interactive = true,
+                keyguardLocked = false,
+                powerSaveMode = true
+            )
+        )
+
+        assertTrue(report.ready)
+        assertEquals(
+            listOf("device_warning_1", "device_warning_2"),
+            report.warnings.map { it.id }
+        )
+        assertTrue(report.statusDetail(running = false).contains("10%"))
+    }
 }

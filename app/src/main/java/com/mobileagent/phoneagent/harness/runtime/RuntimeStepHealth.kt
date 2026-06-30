@@ -12,6 +12,47 @@ data class RuntimeWarning(
     val message: String
 )
 
+data class RuntimeStepTiming(
+    val totalMs: Long,
+    val observationMs: Long = 0L,
+    val planningMs: Long = 0L,
+    val executionMs: Long = 0L,
+    val verificationMs: Long = 0L
+) {
+    fun warnings(): List<RuntimeWarning> {
+        return RuntimeStepTimingMonitor.warningsForTiming(this)
+    }
+
+    fun toDisplayText(): String {
+        return "总耗时 ${totalMs}ms（观察 ${observationMs}ms，规划 ${planningMs}ms，执行 ${executionMs}ms，验证 ${verificationMs}ms）"
+    }
+}
+
+object RuntimeStepTimingMonitor {
+    fun warningsForTiming(timing: RuntimeStepTiming): List<RuntimeWarning> {
+        return when {
+            timing.totalMs >= CRITICAL_STEP_MS -> listOf(
+                RuntimeWarning(
+                    id = "slow_step_critical",
+                    severity = RuntimeWarningSeverity.CRITICAL,
+                    message = "本步骤耗时 ${timing.totalMs}ms，明显偏慢；建议检查模型响应、页面加载或用户等待环节。"
+                )
+            )
+            timing.totalMs >= SLOW_STEP_MS -> listOf(
+                RuntimeWarning(
+                    id = "slow_step",
+                    severity = RuntimeWarningSeverity.WARNING,
+                    message = "本步骤耗时 ${timing.totalMs}ms，建议关注是否存在慢模型调用或页面加载。"
+                )
+            )
+            else -> emptyList()
+        }
+    }
+
+    private const val SLOW_STEP_MS = 15_000L
+    private const val CRITICAL_STEP_MS = 30_000L
+}
+
 object RuntimeStepHealthMonitor {
     fun warningsForStep(stepIndex: Int, maxSteps: Int): List<RuntimeWarning> {
         if (stepIndex <= 0) {

@@ -40,6 +40,61 @@ class TaskPreprocessorTest {
     }
 
     @Test
+    fun sensitivePaymentTaskAsksUserBeforePlanning() {
+        val result = preprocessor.preprocess("打开支付宝，然后给张三转账100元")
+
+        assertNotNull(result)
+        requireNotNull(result)
+        assertJsonField(result.actionJson, "action", "Ask_User")
+        assertTrue(result.actionJson.contains("确认继续"))
+        assertTrue(result.actionJson.contains("取消任务"))
+        assertTrue(result.skipLlm)
+
+        val decision = result.toPlanDecision()
+        assertFalse(decision.finishRequested)
+        assertTrue(decision.rawResponse.contains("敏感操作"))
+    }
+
+    @Test
+    fun sensitiveLoginTaskTakesPriorityOverDirectLaunch() {
+        val result = preprocessor.preprocess("打开工商银行登录并查看余额")
+
+        assertNotNull(result)
+        requireNotNull(result)
+        assertJsonField(result.actionJson, "action", "Ask_User")
+        assertFalse(result.toPlanDecision().finishRequested)
+    }
+
+    @Test
+    fun complexMultiStepTaskCreatesTraceableTodosBeforePlanning() {
+        val result = preprocessor.preprocess("帮我查明天北京天气，然后复制摘要，再发给微信好友")
+
+        assertNotNull(result)
+        requireNotNull(result)
+        assertJsonField(result.actionJson, "action", "Note")
+        assertTrue(result.actionJson.contains("- [ ] 帮我查明天北京天气"))
+        assertTrue(result.actionJson.contains("- [ ] 复制摘要"))
+        assertTrue(result.actionJson.contains("- [ ] 发给微信好友"))
+        assertTrue(result.skipLlm)
+        assertEquals(PreprocessedTaskType.UI_INTERACTION, result.taskType)
+
+        val decision = result.toPlanDecision()
+        assertFalse(decision.finishRequested)
+        assertTrue(decision.rawResponse.contains("复杂任务"))
+    }
+
+    @Test
+    fun compoundLaunchStillLaunchesBeforeTodoPlanning() {
+        val result = preprocessor.preprocess("打开微信，然后搜索张三，再发送消息")
+
+        assertNotNull(result)
+        requireNotNull(result)
+        assertJsonField(result.actionJson, "action", "Launch")
+        assertJsonField(result.actionJson, "app", "微信")
+        assertFalse(result.toPlanDecision().finishRequested)
+    }
+
+    @Test
     fun implicitLaunchFromChineseAppPrefixIsCompound() {
         val result = preprocessor.preprocess("小红书创作一篇图文笔记")
 

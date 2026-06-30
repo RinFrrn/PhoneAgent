@@ -138,6 +138,46 @@ class RuntimeDiagnosticSnapshotBuilderTest {
     }
 
     @Test
+    fun deviceHealthWarningsAppearInDiagnosticText() {
+        val deviceSnapshot = RuntimeDeviceSnapshot(
+            manufacturer = "Google",
+            model = "Pixel",
+            androidVersion = "15",
+            sdkInt = 35,
+            screenResolution = "1080x2400",
+            batteryPercent = 8,
+            charging = false,
+            interactive = true,
+            keyguardLocked = true,
+            powerSaveMode = true
+        )
+        val snapshot = RuntimeDiagnosticSnapshotBuilder.build(
+            running = false,
+            mode = Mode.ACCESSIBILITY,
+            modelLabel = "OpenAI · gpt",
+            readiness = RunReadinessChecker.evaluate(
+                modelConfigured = true,
+                accessibilityEnabled = true,
+                overlayEnabled = true,
+                notificationEnabled = true,
+                mode = Mode.ACCESSIBILITY,
+                screenCaptureReady = true,
+                humanizationEnabled = false,
+                deviceSnapshot = deviceSnapshot
+            ),
+            humanizationProfile = ExecutionHumanizationProfile(),
+            recentSummary = emptyRecentSummary(),
+            history = emptyList(),
+            deviceSnapshot = deviceSnapshot,
+            generatedAt = 1L
+        )
+
+        assertTrue(snapshot.compactText().contains("设备锁屏"))
+        assertTrue(snapshot.detailText().contains("设备提示: 设备处于锁屏状态"))
+        assertTrue(snapshot.detailText().contains("设备提示: 设备处于省电模式"))
+    }
+
+    @Test
     fun diagnosticDetailIncludesModelUsageTrend() {
         val snapshot = RuntimeDiagnosticSnapshotBuilder.build(
             running = false,

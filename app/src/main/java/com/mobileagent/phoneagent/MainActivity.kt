@@ -331,6 +331,7 @@ class MainActivity : AppCompatActivity() {
         val humanizationProfile = ExecutionHumanizationSettings.readProfile(
             getSharedPreferences(ExecutionHumanizationSettings.PREFS_NAME, MODE_PRIVATE)
         )
+        val deviceSnapshot = RuntimeDeviceSnapshotReader.read(this)
         val readiness = RunReadinessChecker.evaluate(
             modelConfigured = modelConfig.isConfigured,
             accessibilityEnabled = accessibilityEnabled,
@@ -338,7 +339,8 @@ class MainActivity : AppCompatActivity() {
             notificationEnabled = notificationEnabled,
             mode = selectedMode,
             screenCaptureReady = !visualMode || mediaProjection != null,
-            humanizationEnabled = humanizationProfile.enabled
+            humanizationEnabled = humanizationProfile.enabled,
+            deviceSnapshot = deviceSnapshot
         )
         val modelName = modelConfig.modelName.ifBlank { "未配置模型" }
         val modelLabel = if (modelConfig.displayName == modelName) {
@@ -362,7 +364,6 @@ class MainActivity : AppCompatActivity() {
         val recentTaskHealthReport = RecentTaskHealthAnalyzer.analyze(recentTraceSnapshot.history)
         val modelUsageTrend = ModelUsageTrendBuilder.summarize(recentTraceSnapshot.sessions)
         val taskHistoryIndexHealth = TaskHistoryIndexHealthInspector.inspect(filesDir)
-        val deviceSnapshot = RuntimeDeviceSnapshotReader.read(this)
         val traceStorageReport = TraceStorageInspector.inspect(filesDir)
         val diagnosticSnapshot = RuntimeDiagnosticSnapshotBuilder.build(
             running = running,

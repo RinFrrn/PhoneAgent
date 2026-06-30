@@ -90,6 +90,9 @@ object TaskLogFormatter {
             step.observationBefore.currentPackage?.takeIf { it.isNotBlank() }?.let {
                 appendLine("包名: $it")
             }
+            step.timing?.let { timing ->
+                appendLine("步骤耗时: ${timing.toDisplayText()}")
+            }
             step.runtimeWarnings.forEach { warning ->
                 appendLine("运行提示: [${warning.severity}] ${warning.message}")
             }

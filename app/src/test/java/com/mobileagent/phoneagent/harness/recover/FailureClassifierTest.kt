@@ -57,6 +57,23 @@ class FailureClassifierTest {
         assertEquals(FailureType.ACTION_NOT_EFFECTIVE, failureType)
     }
 
+    @Test
+    fun classifySensitiveVerificationAsUserConfirmationFailure() {
+        val execution = ExecutionResult(
+            success = true,
+            shouldFinish = false,
+            message = "点击成功",
+            actionJson = """{"_metadata":"do","action":"Tap","element":[500,900]}"""
+        )
+
+        val failureType = classifier.classifyExecutionFailure(
+            execution = execution,
+            verification = VerificationResult(false, 0.96f, "检测到敏感确认页面，需要用户确认或接管: 支付密码")
+        )
+
+        assertEquals(FailureType.SENSITIVE_CONFIRMATION_REQUIRED, failureType)
+    }
+
     private fun launchExecution(status: AppLaunchStatus, afterPackage: String): ExecutionResult {
         return ExecutionResult(
             success = false,

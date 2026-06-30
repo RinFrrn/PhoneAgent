@@ -5,6 +5,7 @@ import com.mobileagent.phoneagent.action.ActionParser
 import com.mobileagent.phoneagent.action.BackAction
 import com.mobileagent.phoneagent.action.LaunchAction
 import com.mobileagent.phoneagent.action.TapAction
+import com.mobileagent.phoneagent.action.TypeAction
 import com.mobileagent.phoneagent.harness.act.ExecutionResult
 import com.mobileagent.phoneagent.harness.observe.Observation
 import com.mobileagent.phoneagent.harness.spec.TaskSpec
@@ -26,15 +27,22 @@ class AppAwareStepVerifier(
         if (execution.launchTrace?.targetPackage != null) {
             return base
         }
+        val action = parsedActionProvider?.invoke(execution.actionJson)
+            ?: runCatching { actionParser.parse(execution.actionJson) }.getOrNull()
+            ?: return base
+        val afterText = after.textDigest()
+        AppVerificationRules.detectSensitiveCheckpoint(
+            action = action,
+            currentApp = after?.currentApp ?: before.currentApp,
+            taskGoal = taskSpec.goal,
+            visibleText = afterText
+        )?.let { return it }
+
         val matchedSkill = SkillRegistry.matchingSkills(
             context,
             after?.currentApp ?: before.currentApp,
             taskSpec.goal
         ).firstOrNull() ?: return base
-        val action = parsedActionProvider?.invoke(execution.actionJson)
-            ?: runCatching { actionParser.parse(execution.actionJson) }.getOrNull()
-            ?: return base
-        val afterText = after.textDigest()
 
         return when (matchedSkill.id) {
             "wechat" -> verifyWechat(base, action, before, after, afterText)
@@ -133,4 +141,51 @@ class AppAwareStepVerifier(
         val normalized = text.lowercase()
         return tokens.any { normalized.contains(it.lowercase()) }
     }
+}
+
+internal object AppVerificationRules {
+    fun detectSensitiveCheckpoint(
+        action: Any,
+        currentApp: String?,
+        taskGoal: String?,
+        visibleText: String
+    ): VerificationResult? {
+        if (action !is TapAction && action !is TypeAction && action !is BackAction) {
+            return null
+        }
+        val evidence = listOfNotNull(currentApp, taskGoal, visibleText)
+            .joinToString("\n")
+            .lowercase()
+        val matched = SENSITIVE_CHECKPOINT_TOKENS.firstOrNull { token ->
+            evidence.contains(token.lowercase())
+        } ?: return null
+        return VerificationResult(
+            passed = false,
+            confidence = 0.96f,
+            reason = "检测到敏感确认页面，需要用户确认或接管: $matched",
+            observedChange = visibleText.take(120)
+        )
+    }
+
+    private val SENSITIVE_CHECKPOINT_TOKENS = listOf(
+        "支付密码",
+        "确认付款",
+        "确认支付",
+        "立即支付",
+        "提交订单",
+        "确认订单",
+        "验证码",
+        "短信验证码",
+        "人脸验证",
+        "人脸识别",
+        "实名认证",
+        "绑定银行卡",
+        "解绑银行卡",
+        "输入密码",
+        "修改密码",
+        "授权登录",
+        "确认登录",
+        "注销账号",
+        "删除账号"
+    )
 }

@@ -21,5 +21,6 @@ data class HarnessStepRecord(
     val verification: VerificationResult?,
     val status: StepStatus,
     val errorMessage: String? = null,
+    val timing: RuntimeStepTiming? = null,
     val runtimeWarnings: List<RuntimeWarning> = emptyList()
 )

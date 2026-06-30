@@ -39,6 +39,9 @@ class FailureClassifier {
         if (execution.requiresTakeover) {
             return FailureType.USER_TAKEOVER_REQUIRED
         }
+        if (verification?.reason?.contains("敏感", ignoreCase = true) == true) {
+            return FailureType.SENSITIVE_CONFIRMATION_REQUIRED
+        }
 
         return when {
             "未找到应用" in rawMessage -> FailureType.APP_NOT_FOUND

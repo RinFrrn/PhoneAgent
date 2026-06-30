@@ -75,7 +75,7 @@ class ActionParser {
             "press_key" -> parsePressKey(json)
             "key_event", "keyevent" -> parseKeyEvent(json)
             "wait" -> WaitAction(parseWaitDuration(json))
-            "done" -> FinishAction(
+            "done", "finish" -> FinishAction(
                 message = json.optString("message", "").ifBlank {
                     json.optString("reason", "任务完成")
                 },

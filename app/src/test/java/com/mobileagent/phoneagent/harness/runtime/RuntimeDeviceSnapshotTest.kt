@@ -28,6 +28,7 @@ class RuntimeDeviceSnapshotTest {
         assertTrue(text.contains("1080x2400"))
         assertTrue(text.contains("88%"))
         assertTrue(text.contains("充电中"))
+        assertTrue(text.contains("屏幕状态未知"))
     }
 
     @Test
@@ -45,6 +46,28 @@ class RuntimeDeviceSnapshotTest {
 
         assertTrue(low.lowBatteryWarning()?.contains("12%") == true)
         assertNull(charging.lowBatteryWarning())
+    }
+
+    @Test
+    fun deviceHealthWarningsExposeBlockedAndAdvisoryStates() {
+        val snapshot = RuntimeDeviceSnapshot(
+            manufacturer = "Google",
+            model = "Pixel",
+            androidVersion = "15",
+            sdkInt = 35,
+            screenResolution = "1080x2400",
+            batteryPercent = 9,
+            charging = false,
+            interactive = false,
+            keyguardLocked = true,
+            powerSaveMode = true
+        )
+
+        assertTrue(snapshot.blockingWarnings().any { it.contains("屏幕关闭") })
+        assertTrue(snapshot.blockingWarnings().any { it.contains("锁屏") })
+        assertTrue(snapshot.advisoryWarnings().any { it.contains("9%") })
+        assertTrue(snapshot.advisoryWarnings().any { it.contains("省电模式") })
+        assertTrue(snapshot.toDisplayText().contains("屏幕关闭 · 已锁屏 · 省电模式"))
     }
 
     @Test

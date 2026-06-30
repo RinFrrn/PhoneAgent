@@ -3,8 +3,10 @@ package com.mobileagent.phoneagent.harness.runtime
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.app.KeyguardManager
 import android.os.BatteryManager
 import android.os.Build
+import android.os.PowerManager
 
 data class RuntimeDeviceSnapshot(
     val manufacturer: String,
@@ -13,7 +15,10 @@ data class RuntimeDeviceSnapshot(
     val sdkInt: Int,
     val screenResolution: String,
     val batteryPercent: Int? = null,
-    val charging: Boolean? = null
+    val charging: Boolean? = null,
+    val interactive: Boolean? = null,
+    val keyguardLocked: Boolean? = null,
+    val powerSaveMode: Boolean? = null
 ) {
     fun deviceLabel(): String {
         val maker = manufacturer.trim()
@@ -38,7 +43,26 @@ data class RuntimeDeviceSnapshot(
     }
 
     fun toDisplayText(): String {
-        return "${deviceLabel()} · Android $androidVersion (SDK $sdkInt) · $screenResolution · 电量 ${batteryText()}"
+        return "${deviceLabel()} · Android $androidVersion (SDK $sdkInt) · $screenResolution · 电量 ${batteryText()} · ${screenStateText()}"
+    }
+
+    fun screenStateText(): String {
+        val interactiveText = when (interactive) {
+            true -> "屏幕亮起"
+            false -> "屏幕关闭"
+            null -> "屏幕状态未知"
+        }
+        val lockText = when (keyguardLocked) {
+            true -> "已锁屏"
+            false -> "未锁屏"
+            null -> "锁屏状态未知"
+        }
+        val powerText = when (powerSaveMode) {
+            true -> "省电模式"
+            false -> "非省电模式"
+            null -> "省电状态未知"
+        }
+        return "$interactiveText · $lockText · $powerText"
     }
 
     fun lowBatteryWarning(): String? {
@@ -50,6 +74,26 @@ data class RuntimeDeviceSnapshot(
             "设备电量 $percent%，长任务前建议充电。"
         } else {
             null
+        }
+    }
+
+    fun blockingWarnings(): List<String> {
+        return buildList {
+            if (interactive == false) {
+                add("设备屏幕关闭，任务执行前请点亮屏幕。")
+            }
+            if (keyguardLocked == true) {
+                add("设备处于锁屏状态，任务执行前请先解锁。")
+            }
+        }
+    }
+
+    fun advisoryWarnings(): List<String> {
+        return buildList {
+            lowBatteryWarning()?.let(::add)
+            if (powerSaveMode == true) {
+                add("设备处于省电模式，后台执行和网络请求可能不稳定。")
+            }
         }
     }
 
@@ -69,7 +113,10 @@ object RuntimeDeviceSnapshotReader {
             sdkInt = Build.VERSION.SDK_INT,
             screenResolution = "${metrics.widthPixels}x${metrics.heightPixels}",
             batteryPercent = readBatteryPercent(batteryIntent),
-            charging = readChargingState(batteryIntent)
+            charging = readChargingState(batteryIntent),
+            interactive = readInteractiveState(context),
+            keyguardLocked = readKeyguardLocked(context),
+            powerSaveMode = readPowerSaveMode(context)
         )
     }
 
@@ -91,5 +138,23 @@ object RuntimeDeviceSnapshotReader {
             BatteryManager.BATTERY_STATUS_NOT_CHARGING -> false
             else -> null
         }
+    }
+
+    private fun readInteractiveState(context: Context): Boolean? {
+        val powerManager = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
+            ?: return null
+        return powerManager.isInteractive
+    }
+
+    private fun readKeyguardLocked(context: Context): Boolean? {
+        val keyguardManager = context.getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
+            ?: return null
+        return keyguardManager.isKeyguardLocked
+    }
+
+    private fun readPowerSaveMode(context: Context): Boolean? {
+        val powerManager = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
+            ?: return null
+        return powerManager.isPowerSaveMode
     }
 }

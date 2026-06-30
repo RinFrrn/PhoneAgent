@@ -51,4 +51,32 @@ class RuntimeStepHealthMonitorTest {
 
         assertTrue(warnings.none { it.id == "max_steps_warning" })
     }
+
+    @Test
+    fun timingWarningsFlagSlowAndCriticalSteps() {
+        val slow = RuntimeStepTiming(totalMs = 15_000L).warnings()
+        val critical = RuntimeStepTiming(totalMs = 30_000L).warnings()
+
+        assertEquals(listOf("slow_step"), slow.map { it.id })
+        assertEquals(RuntimeWarningSeverity.WARNING, slow.first().severity)
+        assertEquals(listOf("slow_step_critical"), critical.map { it.id })
+        assertEquals(RuntimeWarningSeverity.CRITICAL, critical.first().severity)
+    }
+
+    @Test
+    fun timingDisplayIncludesPhaseBreakdown() {
+        val text = RuntimeStepTiming(
+            totalMs = 1234L,
+            observationMs = 100L,
+            planningMs = 200L,
+            executionMs = 300L,
+            verificationMs = 400L
+        ).toDisplayText()
+
+        assertTrue(text.contains("总耗时 1234ms"))
+        assertTrue(text.contains("观察 100ms"))
+        assertTrue(text.contains("规划 200ms"))
+        assertTrue(text.contains("执行 300ms"))
+        assertTrue(text.contains("验证 400ms"))
+    }
 }

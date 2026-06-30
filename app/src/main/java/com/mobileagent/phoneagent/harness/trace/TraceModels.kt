@@ -4,6 +4,7 @@ import com.mobileagent.phoneagent.harness.act.ExecutionResult
 import com.mobileagent.phoneagent.harness.observe.Observation
 import com.mobileagent.phoneagent.harness.plan.PlanDecision
 import com.mobileagent.phoneagent.harness.recover.FailureType
+import com.mobileagent.phoneagent.harness.runtime.RuntimeStepTiming
 import com.mobileagent.phoneagent.harness.runtime.RuntimeWarning
 import com.mobileagent.phoneagent.harness.runtime.StepStatus
 import com.mobileagent.phoneagent.harness.verify.VerificationResult
@@ -19,6 +20,7 @@ data class StepTrace(
     val verification: VerificationResult?,
     val errorMessage: String? = null,
     val failureType: FailureType? = null,
+    val timing: RuntimeStepTiming? = null,
     val runtimeWarnings: List<RuntimeWarning> = emptyList()
 )
 

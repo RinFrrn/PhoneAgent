@@ -57,7 +57,8 @@ object RunReadinessChecker {
         notificationEnabled: Boolean,
         mode: Mode,
         screenCaptureReady: Boolean,
-        humanizationEnabled: Boolean
+        humanizationEnabled: Boolean,
+        deviceSnapshot: RuntimeDeviceSnapshot? = null
     ): RunReadinessReport {
         val checks = mutableListOf<ReadinessCheck>()
 
@@ -113,6 +114,28 @@ object RunReadinessChecker {
                     severity = ReadinessSeverity.WARNING,
                     title = "屏幕录制待授权",
                     detail = "当前模式会在开始任务时请求一次屏幕录制权限。"
+                )
+            )
+        }
+
+        deviceSnapshot?.blockingWarnings().orEmpty().forEachIndexed { index, warning ->
+            checks.add(
+                ReadinessCheck(
+                    id = "device_blocker_${index + 1}",
+                    severity = ReadinessSeverity.BLOCKER,
+                    title = "设备状态不可执行",
+                    detail = warning
+                )
+            )
+        }
+
+        deviceSnapshot?.advisoryWarnings().orEmpty().forEachIndexed { index, warning ->
+            checks.add(
+                ReadinessCheck(
+                    id = "device_warning_${index + 1}",
+                    severity = ReadinessSeverity.WARNING,
+                    title = "设备健康需关注",
+                    detail = warning
                 )
             )
         }
