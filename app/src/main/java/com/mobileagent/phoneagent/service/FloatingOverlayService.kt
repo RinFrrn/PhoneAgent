@@ -211,6 +211,7 @@ class FloatingOverlayService : Service() {
     private var teachingFinishButton: Button? = null
     private var overlayParams: WindowManager.LayoutParams? = null
     private var overlayFocusable = false
+    private var overlayInputMode = OverlayInputMode.QUICK_ASK
     private var quickAskMode = Mode.ACCESSIBILITY
     private var quickAskHasScreenCapture = false
     private var teachingGoalDraft = ""
@@ -416,7 +417,10 @@ class FloatingOverlayService : Service() {
             false
         }
         quickAskStartButton?.setOnClickListener {
-            startQuickAskFromOverlay()
+            when (overlayInputMode) {
+                OverlayInputMode.QUICK_ASK -> startQuickAskFromOverlay()
+                OverlayInputMode.USER_ANSWER -> submitUserAnswerFromOverlay()
+            }
         }
         teachingRecordButton?.setOnClickListener {
             recordTeachingStepFromOverlay()
@@ -479,6 +483,10 @@ class FloatingOverlayService : Service() {
         taskText?.text = task
         taskText?.visibility = View.VISIBLE
         updateActivityIndicator(activityStatus, activityAnimating, interactionRequired)
+        if (interactionRequired && launchRequestId == null) {
+            showUserAnswerInput(detail = detail, task = task)
+            return
+        }
         confirmButton?.text = if (launchRequestId != null) {
             "打开${launchAppLabel ?: "应用"}"
         } else {
@@ -488,6 +496,7 @@ class FloatingOverlayService : Service() {
     }
 
     private fun showQuickAskInput() {
+        overlayInputMode = OverlayInputMode.QUICK_ASK
         currentLaunchRequestId = null
         statusText?.text = "一键问屏"
         detailText?.text = when (quickAskMode) {
@@ -504,9 +513,31 @@ class FloatingOverlayService : Service() {
         actionRow?.visibility = View.GONE
         teachingPanel?.visibility = View.GONE
         quickAskPanel?.visibility = View.VISIBLE
+        quickAskInput?.hint = "问当前页面..."
+        quickAskStartButton?.text = "开始"
         quickAskInput?.setText("")
         quickAskInput?.clearFocus()
         hideKeyboard()
+    }
+
+    private fun showUserAnswerInput(detail: String, task: String) {
+        if (overlayInputMode != OverlayInputMode.USER_ANSWER) {
+            quickAskInput?.setText("")
+        }
+        overlayInputMode = OverlayInputMode.USER_ANSWER
+        currentLaunchRequestId = null
+        statusText?.text = "需要你的回答"
+        detailText?.text = detail
+        taskText?.text = task
+        taskText?.visibility = View.VISIBLE
+        activityText?.visibility = View.GONE
+        confirmButton?.visibility = View.GONE
+        actionRow?.visibility = View.VISIBLE
+        teachingPanel?.visibility = View.GONE
+        quickAskPanel?.visibility = View.VISIBLE
+        quickAskInput?.hint = "输入回答；留空则表示已处理"
+        quickAskStartButton?.text = "提交"
+        setOverlayFocusable(true)
     }
 
     private fun showTeachingInput() {
@@ -595,6 +626,20 @@ class FloatingOverlayService : Service() {
                 source = TaskRunSource.QUICK_ASK
             )
         )
+    }
+
+    private fun submitUserAnswerFromOverlay() {
+        val answer = quickAskInput?.text?.toString()?.trim().orEmpty()
+        hideKeyboard()
+        quickAskPanel?.visibility = View.GONE
+        actionRow?.visibility = View.VISIBLE
+        setOverlayFocusable(false)
+        detailText?.text = if (answer.isBlank()) {
+            "已确认用户介入完成，正在继续。"
+        } else {
+            "已提交回答，正在继续。"
+        }
+        AgentSessionCoordinator.confirmUserAction(answer.takeIf { it.isNotBlank() })
     }
 
     private fun recordTeachingStepFromOverlay() {
@@ -818,6 +863,11 @@ class FloatingOverlayService : Service() {
         val launchRequestId: String?,
         val launchAppLabel: String?
     )
+
+    private enum class OverlayInputMode {
+        QUICK_ASK,
+        USER_ANSWER
+    }
 
     private class TapMarkerView(
         context: Context,

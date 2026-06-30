@@ -1,17 +1,286 @@
 package com.mobileagent.phoneagent.agent
 
 import android.util.Log
-import org.json.JSONObject
 
 class ResponseActionParser {
     private val tag = "ResponseActionParser"
 
     fun parseActionFromResponse(response: String): String {
-        Log.d(tag, "解析操作响应: ${response.take(200)}...")
+        logDebug("解析操作响应: ${response.take(200)}...")
+        val actionSegment = extractActionSegment(response)
+        normalizeJsonAction(actionSegment)?.let { json ->
+            logDebug("从动作段提取到 JSON: $json")
+            return json
+        }
 
+        extractFirstValidJson(actionSegment)?.let { json ->
+            logDebug("从动作段提取到完整 JSON: $json")
+            return json
+        }
+
+        return parseActionFromCode(actionSegment)
+    }
+
+    private fun logDebug(message: String) {
+        runCatching { Log.d(tag, message) }
+    }
+
+    private fun extractActionSegment(response: String): String {
+        extractTagContent(response, "tool_call")?.let { return it }
+        extractTagContent(response, "answer")?.let { return it }
+        extractBoxAction(response)?.let { return it }
+        extractMultilineAction(response)?.let { return it }
+        return response
+    }
+
+    private fun extractTagContent(response: String, tagName: String): String? {
+        val startTag = "<$tagName>"
+        val endTag = "</$tagName>"
+        val start = response.indexOf(startTag)
+        if (start == -1) {
+            return null
+        }
+        val contentStart = start + startTag.length
+        val end = response.indexOf(endTag, contentStart)
+        return if (end == -1) {
+            response.substring(contentStart).trim()
+        } else {
+            response.substring(contentStart, end).trim()
+        }.takeIf { it.isNotBlank() }
+    }
+
+    private fun extractBoxAction(response: String): String? {
+        val pattern = Regex("""<\|begin_of_box\|>(.*?)<\|end_of_box\|>""", RegexOption.DOT_MATCHES_ALL)
+        val boxes = pattern.findAll(response)
+            .map { it.groupValues[1].trim() }
+            .filter { it.isNotBlank() }
+            .toList()
+        return when {
+            boxes.size >= 2 -> boxes[1]
+            boxes.size == 1 -> boxes[0]
+            else -> null
+        }
+    }
+
+    private fun extractMultilineAction(response: String): String? {
+        val actionLines = mutableListOf<String>()
+        var inAction = false
+        lineLoop@ for (line in response.lines()) {
+            val trimmed = line.trim()
+            when (trimmed) {
+                "{action}" -> {
+                    inAction = true
+                    continue@lineLoop
+                }
+                "{think}", "{thinking}" -> {
+                    if (inAction) break@lineLoop
+                }
+            }
+            if (inAction && trimmed.isNotBlank()) {
+                actionLines += trimmed
+            }
+        }
+        return actionLines.joinToString("\n").takeIf { it.isNotBlank() }
+    }
+
+    private fun normalizeJsonAction(code: String): String? {
+        val json = code.trim()
+        if (!json.startsWith("{") || !json.endsWith("}")) {
+            return null
+        }
+        if (json.contains(Regex(""""_metadata"\s*:"""))) {
+            return json
+        }
+        extractJsonValue(json, "action")?.let { actionValue ->
+            return when {
+                actionValue.startsWith("{") -> actionValue
+                actionValue.startsWith("[") -> firstJsonAction(actionValue)
+                actionValue.startsWith("\"") -> {
+                    if (hasOtherFields(json, "action")) {
+                        json
+                    } else {
+                        parseActionFromCode(unquote(actionValue))
+                    }
+                }
+                else -> json
+            }
+        }
+        return null
+    }
+
+    private fun hasOtherFields(json: String, ignoredKey: String): Boolean {
+        val objectBody = json.trim().removePrefix("{").removeSuffix("}")
+        var depth = 0
+        var inString = false
+        var escaped = false
+        val topLevel = mutableListOf<String>()
+        val current = StringBuilder()
+        for (char in objectBody) {
+            if (inString) {
+                current.append(char)
+                if (escaped) {
+                    escaped = false
+                } else if (char == '\\') {
+                    escaped = true
+                } else if (char == '"') {
+                    inString = false
+                }
+                continue
+            }
+            when (char) {
+                '"' -> {
+                    inString = true
+                    current.append(char)
+                }
+                '{', '[' -> {
+                    depth++
+                    current.append(char)
+                }
+                '}', ']' -> {
+                    depth--
+                    current.append(char)
+                }
+                ',' -> {
+                    if (depth == 0) {
+                        topLevel += current.toString()
+                        current.clear()
+                    } else {
+                        current.append(char)
+                    }
+                }
+                else -> current.append(char)
+            }
+        }
+        if (current.isNotBlank()) {
+            topLevel += current.toString()
+        }
+        return topLevel.any { !it.trim().startsWith("\"$ignoredKey\"") }
+    }
+
+    private fun firstJsonAction(array: String): String? {
+        val body = array.trim().removePrefix("[").removeSuffix("]").trim()
+        if (body.isBlank()) {
+            return null
+        }
+        val first = extractFirstArrayItem(body) ?: return null
+        return when {
+            first.startsWith("{") -> first
+            first.startsWith("\"") -> parseActionFromCode(unquote(first))
+            else -> null
+        }
+    }
+
+    private fun extractFirstArrayItem(body: String): String? {
+        var depth = 0
+        var inString = false
+        var escaped = false
+        val item = StringBuilder()
+        for (char in body) {
+            if (inString) {
+                item.append(char)
+                if (escaped) {
+                    escaped = false
+                } else if (char == '\\') {
+                    escaped = true
+                } else if (char == '"') {
+                    inString = false
+                }
+                continue
+            }
+            when (char) {
+                '"' -> {
+                    inString = true
+                    item.append(char)
+                }
+                '{', '[' -> {
+                    depth++
+                    item.append(char)
+                }
+                '}', ']' -> {
+                    depth--
+                    item.append(char)
+                }
+                ',' -> if (depth == 0) return item.toString().trim() else item.append(char)
+                else -> item.append(char)
+            }
+        }
+        return item.toString().trim().takeIf { it.isNotBlank() }
+    }
+
+    private fun extractJsonValue(json: String, key: String): String? {
+        val keyMatch = Regex(""""${Regex.escape(key)}"\s*:""").find(json) ?: return null
+        var index = keyMatch.range.last + 1
+        while (index < json.length && json[index].isWhitespace()) {
+            index++
+        }
+        if (index >= json.length) {
+            return null
+        }
+        return when (json[index]) {
+            '{' -> extractBalanced(json, index, '{', '}')
+            '[' -> extractBalanced(json, index, '[', ']')
+            '"' -> extractQuoted(json, index)
+            else -> {
+                val end = json.indexOf(',', index).takeIf { it != -1 } ?: json.indexOf('}', index).takeIf { it != -1 } ?: json.length
+                json.substring(index, end).trim()
+            }
+        }
+    }
+
+    private fun extractBalanced(text: String, start: Int, open: Char, close: Char): String? {
+        var depth = 0
+        var inString = false
+        var escaped = false
+        for (index in start until text.length) {
+            val char = text[index]
+            if (inString) {
+                if (escaped) {
+                    escaped = false
+                } else if (char == '\\') {
+                    escaped = true
+                } else if (char == '"') {
+                    inString = false
+                }
+                continue
+            }
+            when (char) {
+                '"' -> inString = true
+                open -> depth++
+                close -> {
+                    depth--
+                    if (depth == 0) {
+                        return text.substring(start, index + 1).trim()
+                    }
+                }
+            }
+        }
+        return null
+    }
+
+    private fun extractQuoted(text: String, start: Int): String? {
+        var escaped = false
+        for (index in start + 1 until text.length) {
+            val char = text[index]
+            if (escaped) {
+                escaped = false
+            } else if (char == '\\') {
+                escaped = true
+            } else if (char == '"') {
+                return text.substring(start, index + 1)
+            }
+        }
+        return null
+    }
+
+    private fun unquote(value: String): String {
+        return value.trim().removePrefix("\"").removeSuffix("\"")
+            .replace("\\\"", "\"")
+            .replace("\\\\", "\\")
+    }
+
+    private fun extractFirstValidJson(response: String): String? {
         var braceCount = 0
         var startIndex = -1
-        var endIndex = -1
 
         for (i in response.indices) {
             when (response[i]) {
@@ -22,47 +291,49 @@ class ResponseActionParser {
                 '}' -> {
                     braceCount--
                     if (braceCount == 0 && startIndex != -1) {
-                        endIndex = i
-                        break
+                        val jsonStr = response.substring(startIndex, i + 1)
+                        val normalized = normalizeJsonAction(jsonStr)
+                        if (normalized != null) {
+                            return normalized
+                        }
+                        startIndex = -1
                     }
                 }
             }
         }
 
-        if (startIndex != -1 && endIndex != -1) {
-            val jsonStr = response.substring(startIndex, endIndex + 1)
-            try {
-                JSONObject(jsonStr)
-                Log.d(tag, "提取到完整 JSON: $jsonStr")
-                return jsonStr
-            } catch (e: Exception) {
-                Log.w(tag, "提取的 JSON 无效，尝试其他方法", e)
-            }
-        }
-
-        return parseActionFromCode(response)
+        return null
     }
 
     private fun parseActionFromCode(code: String): String {
-        val json = JSONObject()
+        val json = linkedMapOf<String, Any>()
 
         when {
             code.contains("finish(") -> {
-                json.put("_metadata", "finish")
+                json["_metadata"] = "finish"
                 val messageMatch = """message=["']([^"']+)["']""".toRegex().find(code)
                 if (messageMatch != null) {
-                    json.put("message", messageMatch.groupValues[1])
+                    json["message"] = messageMatch.groupValues[1]
                 }
             }
             code.contains("do(") -> {
-                json.put("_metadata", "do")
+                json["_metadata"] = "do"
                 putOptionalArgument(json, code, "purpose")
                 putOptionalArgument(json, code, "message")
                 putOptionalArgument(json, code, "instruction")
+                putOptionalArgument(json, code, "question")
+                putOptionalArgument(json, code, "reason")
+                putOptionalArgument(json, code, "answer")
+                putOptionalArgument(json, code, "text")
+                putOptionalArgument(json, code, "content")
+                putOptionalArgument(json, code, "category")
+                putOptionalArgument(json, code, "todos")
+                putOptionalArgument(json, code, "app_name")
+                putOptionalBooleanArgument(json, code, "success")
                 val actionMatch = """action=["']([^"']+)["']""".toRegex().find(code)
                 if (actionMatch != null) {
                     val action = actionMatch.groupValues[1]
-                    json.put("action", action)
+                    json["action"] = action
 
                     when (action) {
                         "Tap", "Click" -> {
@@ -71,55 +342,110 @@ class ResponseActionParser {
                                 elementMatch = """element=["'](\d+),\s*(\d+)["']""".toRegex().find(code)
                             }
                             if (elementMatch != null) {
-                                json.put("element", org.json.JSONArray().apply {
-                                    put(elementMatch.groupValues[1].toInt())
-                                    put(elementMatch.groupValues[2].toInt())
-                                })
+                                json["element"] = listOf(
+                                    elementMatch.groupValues[1].toInt(),
+                                    elementMatch.groupValues[2].toInt()
+                                )
                             }
-                            json.put("action", "Tap")
+                            json["action"] = "Tap"
                         }
                         "Type", "Type_Name" -> {
                             val textMatch = """text=["']([^"']+)["']""".toRegex().find(code)
                             if (textMatch != null) {
-                                json.put("text", textMatch.groupValues[1])
+                                json["text"] = textMatch.groupValues[1]
                             }
                         }
                         "Swipe" -> {
                             val startMatch = """start=\[(\d+),(\d+)\]""".toRegex().find(code)
                             val endMatch = """end=\[(\d+),(\d+)\]""".toRegex().find(code)
                             if (startMatch != null && endMatch != null) {
-                                json.put("start", org.json.JSONArray().apply {
-                                    put(startMatch.groupValues[1].toInt())
-                                    put(startMatch.groupValues[2].toInt())
-                                })
-                                json.put("end", org.json.JSONArray().apply {
-                                    put(endMatch.groupValues[1].toInt())
-                                    put(endMatch.groupValues[2].toInt())
-                                })
+                                json["start"] = listOf(
+                                    startMatch.groupValues[1].toInt(),
+                                    startMatch.groupValues[2].toInt()
+                                )
+                                json["end"] = listOf(
+                                    endMatch.groupValues[1].toInt(),
+                                    endMatch.groupValues[2].toInt()
+                                )
                             }
                         }
                         "Launch" -> {
                             val appMatch = """app=["']([^"']+)["']""".toRegex().find(code)
                             if (appMatch != null) {
-                                json.put("app", appMatch.groupValues[1])
+                                json["app"] = appMatch.groupValues[1]
                             }
                         }
+                        "Ask_User", "AskUser", "ask_user" -> putOptionsArgument(json, code)
+                        "Answer", "answer" -> Unit
+                        "Read_Clipboard", "ReadClipboard", "read_clipboard" -> Unit
+                        "Write_Clipboard", "WriteClipboard", "write_clipboard" -> Unit
                     }
                 }
             }
             else -> {
-                json.put("_metadata", "finish")
-                json.put("message", code)
+                json["_metadata"] = "finish"
+                json["message"] = code
             }
         }
 
-        return json.toString()
+        return json.toJsonObject()
     }
 
-    private fun putOptionalArgument(json: JSONObject, code: String, key: String) {
+    private fun putOptionalArgument(json: MutableMap<String, Any>, code: String, key: String) {
         val match = Regex("""$key=["']([^"']+)["']""").find(code)
         if (match != null) {
-            json.put(key, match.groupValues[1])
+            json[key] = match.groupValues[1]
+        }
+    }
+
+    private fun putOptionalBooleanArgument(json: MutableMap<String, Any>, code: String, key: String) {
+        val match = Regex("""$key=(true|false)""", RegexOption.IGNORE_CASE).find(code)
+        if (match != null) {
+            json[key] = match.groupValues[1].equals("true", ignoreCase = true)
+        }
+    }
+
+    private fun putOptionsArgument(json: MutableMap<String, Any>, code: String) {
+        val match = Regex("""options=\[([^\]]*)\]""").find(code) ?: return
+        val options = Regex("""["']([^"']+)["']""")
+            .findAll(match.groupValues[1])
+            .map { it.groupValues[1] }
+            .toList()
+        if (options.isNotEmpty()) {
+            json["options"] = options
+        }
+    }
+
+    private fun Map<String, Any>.toJsonObject(): String {
+        return entries.joinToString(prefix = "{", postfix = "}") { (key, value) ->
+            "\"${key.escapeJson()}\":${value.toJsonValue()}"
+        }
+    }
+
+    private fun Any.toJsonValue(): String {
+        return when (this) {
+            is String -> "\"${escapeJson()}\""
+            is Boolean -> toString()
+            is Number -> toString()
+            is List<*> -> joinToString(prefix = "[", postfix = "]") { item ->
+                item?.toJsonValue() ?: "null"
+            }
+            else -> "\"${toString().escapeJson()}\""
+        }
+    }
+
+    private fun String.escapeJson(): String {
+        return buildString {
+            this@escapeJson.forEach { char ->
+                when (char) {
+                    '\\' -> append("\\\\")
+                    '"' -> append("\\\"")
+                    '\n' -> append("\\n")
+                    '\r' -> append("\\r")
+                    '\t' -> append("\\t")
+                    else -> append(char)
+                }
+            }
         }
     }
 }

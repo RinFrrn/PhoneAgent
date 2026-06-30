@@ -13,6 +13,7 @@ package com.mobileagent.phoneagent
 
 import android.Manifest
 import android.accessibilityservice.AccessibilityServiceInfo
+import android.app.AlertDialog
 import android.view.accessibility.AccessibilityManager
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -59,8 +60,14 @@ import com.mobileagent.phoneagent.harness.trace.FileTraceStore
 import com.mobileagent.phoneagent.harness.trace.RecentTaskPerformanceSummary
 import com.mobileagent.phoneagent.harness.trace.RecentTaskPerformanceSummaryBuilder
 import com.mobileagent.phoneagent.harness.trace.SessionTrace
+import com.mobileagent.phoneagent.harness.trace.ModelUsageTrendBuilder
+import com.mobileagent.phoneagent.harness.trace.ModelUsageTrendReport
 import com.mobileagent.phoneagent.harness.trace.TaskHistoryEntry
+import com.mobileagent.phoneagent.harness.trace.TaskHistoryIndexHealthInspector
+import com.mobileagent.phoneagent.harness.trace.TaskHistoryIndexHealthReport
+import com.mobileagent.phoneagent.harness.trace.TaskHistoryMaintenance
 import com.mobileagent.phoneagent.harness.trace.TaskHistoryStatus
+import com.mobileagent.phoneagent.harness.trace.TraceStorageInspector
 import com.mobileagent.phoneagent.model.ModelClient
 import com.mobileagent.phoneagent.service.AgentForegroundService
 import com.mobileagent.phoneagent.service.FloatingOverlayService
@@ -353,7 +360,10 @@ class MainActivity : AppCompatActivity() {
             sessions = recentTraceSnapshot.sessions
         )
         val recentTaskHealthReport = RecentTaskHealthAnalyzer.analyze(recentTraceSnapshot.history)
+        val modelUsageTrend = ModelUsageTrendBuilder.summarize(recentTraceSnapshot.sessions)
+        val taskHistoryIndexHealth = TaskHistoryIndexHealthInspector.inspect(filesDir)
         val deviceSnapshot = RuntimeDeviceSnapshotReader.read(this)
+        val traceStorageReport = TraceStorageInspector.inspect(filesDir)
         val diagnosticSnapshot = RuntimeDiagnosticSnapshotBuilder.build(
             running = running,
             mode = selectedMode,
@@ -362,7 +372,9 @@ class MainActivity : AppCompatActivity() {
             humanizationProfile = humanizationProfile,
             recentSummary = recentPerformanceSummary,
             history = recentTraceSnapshot.history,
-            deviceSnapshot = deviceSnapshot
+            deviceSnapshot = deviceSnapshot,
+            modelUsageTrend = modelUsageTrend,
+            traceStorageReport = traceStorageReport
         )
         binding.tvRuntimeDiagnosticSummary.text = diagnosticSnapshot.compactText()
         binding.tvRuntimeDiagnosticSummary.setOnLongClickListener {
@@ -379,7 +391,13 @@ class MainActivity : AppCompatActivity() {
         binding.btnRunEval.isEnabled = !running
 
         binding.advancedContent.visibility = View.VISIBLE
-        renderTaskHistory(recentTraceSnapshot, recentPerformanceSummary, recentTaskHealthReport)
+        renderTaskHistory(
+            snapshot = recentTraceSnapshot,
+            performanceSummary = recentPerformanceSummary,
+            healthReport = recentTaskHealthReport,
+            modelUsageTrend = modelUsageTrend,
+            indexHealthReport = taskHistoryIndexHealth
+        )
     }
 
     private fun refreshExampleTasks() {
@@ -1388,12 +1406,16 @@ class MainActivity : AppCompatActivity() {
             history = snapshot.history,
             sessions = snapshot.sessions
         ),
-        healthReport: RecentTaskHealthReport = RecentTaskHealthAnalyzer.analyze(snapshot.history)
+        healthReport: RecentTaskHealthReport = RecentTaskHealthAnalyzer.analyze(snapshot.history),
+        modelUsageTrend: ModelUsageTrendReport = ModelUsageTrendBuilder.summarize(snapshot.sessions),
+        indexHealthReport: TaskHistoryIndexHealthReport = TaskHistoryIndexHealthInspector.inspect(filesDir)
     ) {
         binding.llTaskHistory.removeAllViews()
         val history = snapshot.history
         binding.tvRecentPerformanceSummary.text = performanceSummary.toDisplayText()
         binding.tvRecentTaskHealth.text = healthReport.toDisplayText()
+        binding.tvModelUsageTrend.text = modelUsageTrend.toDisplayText()
+        binding.tvTaskHistoryIndexHealth.text = indexHealthReport.toDisplayText()
         binding.tvRecentTaskHealth.setOnLongClickListener {
             copyRecentTaskHealthToClipboard(healthReport)
             true
@@ -1410,7 +1432,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         history.forEach { entry ->
-            binding.llTaskHistory.addView(createTaskHistoryView(entry))
+            binding.llTaskHistory.addView(createTaskHistoryView(entry, indexHealthReport))
         }
     }
 
@@ -1419,9 +1441,12 @@ class MainActivity : AppCompatActivity() {
         val sessions: List<SessionTrace>
     )
 
-    private fun createTaskHistoryView(entry: TaskHistoryEntry): TextView {
+    private fun createTaskHistoryView(
+        entry: TaskHistoryEntry,
+        indexHealthReport: TaskHistoryIndexHealthReport
+    ): TextView {
         return TextView(this).apply {
-            text = buildTaskHistoryText(entry)
+            text = buildTaskHistoryText(entry, indexHealthReport)
             textSize = 12f
             setLineSpacing(2f, 1f)
             setPadding(dp(12), dp(10), dp(12), dp(10))
@@ -1430,6 +1455,10 @@ class MainActivity : AppCompatActivity() {
             setOnClickListener {
                 openTaskTrace(entry)
             }
+            setOnLongClickListener {
+                confirmDeleteTaskHistory(entry)
+                true
+            }
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
@@ -1437,6 +1466,27 @@ class MainActivity : AppCompatActivity() {
                 bottomMargin = dp(8)
             }
         }
+    }
+
+    private fun confirmDeleteTaskHistory(entry: TaskHistoryEntry) {
+        if (entry.status == TaskHistoryStatus.RUNNING) {
+            Toast.makeText(this, "运行中的任务不能删除，请先停止任务", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle("删除任务历史")
+            .setMessage(
+                "将删除这条任务历史和对应 Trace 文件。\n\n" +
+                    entry.taskGoal.take(80)
+            )
+            .setNegativeButton("取消", null)
+            .setPositiveButton("删除") { _, _ ->
+                val result = TaskHistoryMaintenance.deleteFinishedEntry(filesDir, entry.sessionId)
+                Toast.makeText(this, result.toDisplayText(), Toast.LENGTH_SHORT).show()
+                renderTaskHistory()
+            }
+            .show()
     }
 
     private fun openTaskTrace(entry: TaskHistoryEntry) {
@@ -1451,12 +1501,16 @@ class MainActivity : AppCompatActivity() {
         return (value * resources.displayMetrics.density).toInt()
     }
 
-    private fun buildTaskHistoryText(entry: TaskHistoryEntry): String {
+    private fun buildTaskHistoryText(
+        entry: TaskHistoryEntry,
+        indexHealthReport: TaskHistoryIndexHealthReport
+    ): String {
         val outcome = entry.outcomeMessage?.take(80) ?: "运行中"
+        val indexIssueSuffix = indexHealthReport.issueFor(entry)?.toDisplaySuffix().orEmpty()
         return "${formatHistoryTime(entry.startedAt)} · ${formatHistoryStatus(entry.status)} · ${entry.mode}\n" +
             "模型：${formatHistoryModel(entry)}\n" +
             "${entry.taskGoal}\n" +
-            "$outcome · 步骤 ${entry.totalSteps} · trace ${entry.traceSessionId.take(8)}"
+            "$outcome · 步骤 ${entry.totalSteps} · trace ${entry.traceSessionId.take(8)}$indexIssueSuffix"
     }
 
     private fun formatHistoryTime(timestamp: Long): String {

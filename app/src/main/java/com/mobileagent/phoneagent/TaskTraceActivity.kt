@@ -1,5 +1,6 @@
 package com.mobileagent.phoneagent
 
+import android.app.AlertDialog
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Intent
@@ -14,6 +15,9 @@ import com.mobileagent.phoneagent.harness.trace.ModelCallSummaryBuilder
 import com.mobileagent.phoneagent.harness.trace.SessionTrace
 import com.mobileagent.phoneagent.harness.trace.TaskTraceSearch
 import com.mobileagent.phoneagent.harness.trace.TaskTraceExportBuilder
+import com.mobileagent.phoneagent.harness.trace.TraceStorageInspector
+import com.mobileagent.phoneagent.harness.trace.TraceStorageMaintenance
+import com.mobileagent.phoneagent.harness.trace.VisualContextSummaryBuilder
 import com.mobileagent.phoneagent.skill.SkillRegistry
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -53,6 +57,9 @@ class TaskTraceActivity : AppCompatActivity() {
         binding.btnCopyTraceLog.setOnClickListener {
             copyTraceLog()
         }
+        binding.btnCleanupTraceStorage.setOnClickListener {
+            confirmTraceCleanup()
+        }
         binding.btnSearchTrace.setOnClickListener {
             applyTraceSearch()
         }
@@ -78,6 +85,7 @@ class TaskTraceActivity : AppCompatActivity() {
             setTraceLog("暂无完整输出过程。")
             binding.btnFillTaskDescription.isEnabled = taskGoal.isNotBlank()
             updateGenerateSkillButton(session)
+            refreshTraceStorageSummary()
             return
         }
 
@@ -87,6 +95,32 @@ class TaskTraceActivity : AppCompatActivity() {
         setTraceLog(TaskLogFormatter.formatSession(session))
         binding.btnFillTaskDescription.isEnabled = taskGoal.isNotBlank()
         updateGenerateSkillButton(session)
+        refreshTraceStorageSummary()
+    }
+
+    private fun refreshTraceStorageSummary() {
+        val storageReport = TraceStorageInspector.inspect(filesDir)
+        val cleanupPreview = TraceStorageMaintenance.previewOrphanCleanup(filesDir)
+        binding.tvTraceStorageSummary.text = buildString {
+            append(storageReport.toDisplayText())
+            if (storageReport.hasWarnings()) {
+                append(" · 需关注")
+            }
+            appendLine()
+            append(
+                if (cleanupPreview.hasCandidates()) {
+                    cleanupPreview.toDisplayText()
+                } else {
+                    "Trace 维护: 无可清理孤立文件"
+                }
+            )
+        }
+        binding.btnCleanupTraceStorage.isEnabled = cleanupPreview.hasCandidates()
+        binding.btnCleanupTraceStorage.text = if (cleanupPreview.hasCandidates()) {
+            "清理孤立日志"
+        } else {
+            "暂无可清理"
+        }
     }
 
     private fun setTraceLog(log: String) {
@@ -122,12 +156,14 @@ class TaskTraceActivity : AppCompatActivity() {
             .joinToString(" · ")
             .ifBlank { "未记录" }
         val modelStats = ModelCallSummaryBuilder.summarize(session)
+        val visualSummary = VisualContextSummaryBuilder.summarize(session)
         return buildString {
             appendLine("任务: ${session.taskGoal}")
             appendLine("结果: $outcome · ${session.outcomeMessage ?: "无结果说明"}")
             appendLine("步骤: ${session.totalSteps}")
             appendLine("模型: $model")
             appendLine(modelStats.toDisplayText())
+            appendLine(visualSummary.toDisplayText())
             appendLine("开始: ${formatTime(session.startedAt)}")
             session.completedAt?.let { appendLine("结束: ${formatTime(it)}") }
             append("Trace: ${session.sessionId.take(8)}")
@@ -211,6 +247,29 @@ class TaskTraceActivity : AppCompatActivity() {
         val clipboard = getSystemService(ClipboardManager::class.java)
         clipboard.setPrimaryClip(ClipData.newPlainText("PhoneAgent 任务日志", exportText))
         Toast.makeText(this, "安全日志已复制", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun confirmTraceCleanup() {
+        val preview = TraceStorageMaintenance.previewOrphanCleanup(filesDir)
+        if (!preview.hasCandidates()) {
+            Toast.makeText(this, "暂无可清理的孤立日志", Toast.LENGTH_SHORT).show()
+            refreshTraceStorageSummary()
+            return
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle("清理孤立日志")
+            .setMessage(
+                preview.toDisplayText() +
+                    "\n\n将删除 ${TraceStorageMaintenance.DEFAULT_ORPHAN_RETENTION_DAYS} 天前且不在当前历史索引里的 trace 文件。"
+            )
+            .setNegativeButton("取消", null)
+            .setPositiveButton("清理") { _, _ ->
+                val result = TraceStorageMaintenance.cleanupOrphanTraces(filesDir)
+                refreshTraceStorageSummary()
+                Toast.makeText(this, result.toDisplayText(), Toast.LENGTH_SHORT).show()
+            }
+            .show()
     }
 
     private fun formatTime(timestamp: Long): String {

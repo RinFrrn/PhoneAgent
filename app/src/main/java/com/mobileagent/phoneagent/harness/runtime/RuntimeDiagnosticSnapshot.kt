@@ -2,9 +2,13 @@ package com.mobileagent.phoneagent.harness.runtime
 
 import com.mobileagent.phoneagent.agent.Mode
 import com.mobileagent.phoneagent.harness.act.ExecutionHumanizationProfile
+import com.mobileagent.phoneagent.harness.trace.ModelCallHealthAnalyzer
+import com.mobileagent.phoneagent.harness.trace.ModelCallHealthLevel
+import com.mobileagent.phoneagent.harness.trace.ModelUsageTrendReport
 import com.mobileagent.phoneagent.harness.trace.RecentTaskPerformanceSummary
 import com.mobileagent.phoneagent.harness.trace.TaskHistoryEntry
 import com.mobileagent.phoneagent.harness.trace.TaskHistoryStatus
+import com.mobileagent.phoneagent.harness.trace.TraceStorageReport
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -26,7 +30,9 @@ data class RuntimeDiagnosticSnapshot(
     val humanizationProfile: ExecutionHumanizationProfile,
     val recentSummary: RecentTaskPerformanceSummary,
     val latestHistory: TaskHistoryEntry?,
-    val deviceSnapshot: RuntimeDeviceSnapshot? = null
+    val deviceSnapshot: RuntimeDeviceSnapshot? = null,
+    val modelUsageTrend: ModelUsageTrendReport? = null,
+    val traceStorageReport: TraceStorageReport? = null
 ) {
     fun compactText(): String {
         val readinessText = when {
@@ -39,13 +45,20 @@ data class RuntimeDiagnosticSnapshot(
             recentSummary.finishedCount > 0 -> "成功 ${recentSummary.successCount}/${recentSummary.finishedCount}"
             else -> "运行中 ${recentSummary.runningCount}"
         }
+        val modelHealth = ModelCallHealthAnalyzer.analyze(recentSummary.modelCallSummary)
         val modelText = if (recentSummary.modelCallSummary.isEmpty()) {
             "模型未统计"
+        } else if (modelHealth.level == ModelCallHealthLevel.SLOW || modelHealth.level == ModelCallHealthLevel.HEAVY) {
+            "模型${modelHealth.level.displayName()}"
         } else {
             "模型均耗 ${recentSummary.modelCallSummary.averageLatencyMs}ms"
         }
         val deviceText = deviceSnapshot?.lowBatteryWarning()?.let { " · 低电量" }.orEmpty()
-        return "运行诊断：${level.displayName()} · $readinessText · $recentText · $modelText$deviceText"
+        val traceText = traceStorageReport
+            ?.takeIf { it.hasWarnings() }
+            ?.let { " · Trace需关注" }
+            .orEmpty()
+        return "运行诊断：${level.displayName()} · $readinessText · $recentText · $modelText$deviceText$traceText"
     }
 
     fun detailText(): String {
@@ -61,6 +74,7 @@ data class RuntimeDiagnosticSnapshot(
             "${entry.taskGoal} / ${entry.status}" +
                 (entry.failureType?.let { " / failure=$it" } ?: "")
         } ?: "暂无"
+        val modelHealth = ModelCallHealthAnalyzer.analyze(recentSummary.modelCallSummary)
         return buildString {
             appendLine("PhoneAgent 运行诊断")
             appendLine("生成时间: ${formatTime(generatedAt)}")
@@ -71,6 +85,9 @@ data class RuntimeDiagnosticSnapshot(
             appendLine("设备: ${deviceSnapshot?.toDisplayText() ?: "未记录"}")
             deviceSnapshot?.lowBatteryWarning()?.let { appendLine("设备提示: $it") }
             appendLine("执行拟真: $humanizationText")
+            appendLine(modelHealth.detailText())
+            modelUsageTrend?.let { appendLine(it.detailText()) }
+            appendLine(traceStorageReport?.detailText() ?: "Trace 存储: 未记录")
             appendLine("最近任务: ${recentSummary.toDisplayText()}")
             appendLine("最新历史: $latestText")
             appendLine("检查项:")
@@ -84,6 +101,16 @@ data class RuntimeDiagnosticSnapshot(
             RuntimeDiagnosticLevel.DEGRADED -> "需关注"
             RuntimeDiagnosticLevel.BLOCKED -> "阻塞"
             RuntimeDiagnosticLevel.RUNNING -> "运行中"
+        }
+    }
+
+    private fun ModelCallHealthLevel.displayName(): String {
+        return when (this) {
+            ModelCallHealthLevel.NO_DATA -> "未记录"
+            ModelCallHealthLevel.HEALTHY -> "健康"
+            ModelCallHealthLevel.WATCH -> "需观察"
+            ModelCallHealthLevel.SLOW -> "偏慢"
+            ModelCallHealthLevel.HEAVY -> "负载偏高"
         }
     }
 
@@ -102,6 +129,8 @@ object RuntimeDiagnosticSnapshotBuilder {
         recentSummary: RecentTaskPerformanceSummary,
         history: List<TaskHistoryEntry>,
         deviceSnapshot: RuntimeDeviceSnapshot? = null,
+        modelUsageTrend: ModelUsageTrendReport? = null,
+        traceStorageReport: TraceStorageReport? = null,
         generatedAt: Long = System.currentTimeMillis()
     ): RuntimeDiagnosticSnapshot {
         val latestHistory = history.maxByOrNull { it.startedAt }
@@ -115,7 +144,9 @@ object RuntimeDiagnosticSnapshotBuilder {
             humanizationProfile = humanizationProfile,
             recentSummary = recentSummary,
             latestHistory = latestHistory,
-            deviceSnapshot = deviceSnapshot
+            deviceSnapshot = deviceSnapshot,
+            modelUsageTrend = modelUsageTrend,
+            traceStorageReport = traceStorageReport
         )
     }
 

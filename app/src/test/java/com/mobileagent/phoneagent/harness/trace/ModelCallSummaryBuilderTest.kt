@@ -71,6 +71,56 @@ class ModelCallSummaryBuilderTest {
     }
 
     @Test
+    fun estimatesKnownModelCostAndTracksUnknownCalls() {
+        val session = session(
+            stats = listOf(
+                ModelCallStats(
+                    providerName = "ZHIPU",
+                    modelName = "glm-4-plus",
+                    latencyMs = 100,
+                    requestChars = 1000,
+                    responseChars = 200,
+                    promptTokens = 1000,
+                    completionTokens = 500,
+                    totalTokens = 1500
+                ),
+                ModelCallStats(
+                    providerName = "OPENAI",
+                    modelName = "unknown-model",
+                    latencyMs = 100,
+                    requestChars = 1000,
+                    responseChars = 200,
+                    promptTokens = 1000,
+                    completionTokens = 500,
+                    totalTokens = 1500
+                )
+            )
+        )
+
+        val summary = ModelCallSummaryBuilder.summarize(session)
+
+        assertEquals(0.075, summary.estimatedCostUsd ?: -1.0, 0.000001)
+        assertEquals(1, summary.unestimatedCostCallCount)
+        assertTrue(summary.toDisplayText().contains("估算成本"))
+        assertTrue(summary.toDisplayText().contains("1 次未估算"))
+    }
+
+    @Test
+    fun freeTierModelsEstimateZeroCost() {
+        val estimate = ModelCostEstimator.estimate(
+            ModelCallStats(
+                providerName = "ZHIPU",
+                modelName = "glm-4-flash",
+                latencyMs = 10,
+                requestChars = 100,
+                responseChars = 50
+            )
+        )
+
+        assertEquals(0.0, estimate?.costUsd ?: -1.0, 0.0)
+    }
+
+    @Test
     fun emptySessionReturnsEmptySummary() {
         val summary = ModelCallSummaryBuilder.summarize(session(stats = emptyList()))
 

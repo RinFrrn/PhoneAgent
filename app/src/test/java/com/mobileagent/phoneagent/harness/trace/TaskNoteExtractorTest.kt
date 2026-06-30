@@ -33,6 +33,27 @@ class TaskNoteExtractorTest {
     }
 
     @Test
+    fun extractsReferenceRecordImportantContentAction() {
+        val note = TaskNoteExtractor.fromActionJson(
+            """{"action":"record_important_content","content":"余额 123 元","category":"finance","reason":"后续需要汇报"}"""
+        )
+
+        assertEquals(TaskNoteType.IMPORTANT_CONTENT, note?.type)
+        assertEquals("余额 123 元", note?.content)
+        assertEquals("finance", note?.category)
+    }
+
+    @Test
+    fun extractsReferenceTodosAction() {
+        val note = TaskNoteExtractor.fromActionJson(
+            """{"action":"generate_or_update_todos","todos":"- [x] 搜索\n- [ ] 汇总","reason":"同步进度"}"""
+        )
+
+        assertEquals(TaskNoteType.TODO_LIST, note?.type)
+        assertTrue(note?.content?.contains("汇总") == true)
+    }
+
+    @Test
     fun ignoresNonNoteActions() {
         assertNull(TaskNoteExtractor.fromActionJson("""{"_metadata":"do","action":"Tap","element":[1,2]}"""))
     }

@@ -62,6 +62,32 @@ class TaskPreprocessorTest {
     }
 
     @Test
+    fun screenSnapshotCommandFinishesWithTraceMessage() {
+        val result = preprocessor.preprocess("截图")
+
+        assertNotNull(result)
+        requireNotNull(result)
+        assertJsonField(result.actionJson, "_metadata", "finish")
+        assertJsonField(result.actionJson, "message", "已采集当前屏幕观察并写入本次 Trace；视觉/混合模式包含截图输入，无障碍模式包含结构化屏幕文本。")
+        assertTrue(result.skipLlm)
+        assertEquals(PreprocessedTaskType.SYSTEM_COMMAND, result.taskType)
+
+        val decision = result.toPlanDecision()
+        assertTrue(decision.finishRequested)
+        assertTrue(decision.rawResponse.contains("屏幕观察快照"))
+    }
+
+    @Test
+    fun englishScreenCaptureCommandFinishesWithTraceMessage() {
+        val result = preprocessor.preprocess("Screen capture")
+
+        assertNotNull(result)
+        requireNotNull(result)
+        assertJsonField(result.actionJson, "_metadata", "finish")
+        assertTrue(result.skipLlm)
+    }
+
+    @Test
     fun unrelatedTaskFallsThroughToLlmPlanner() {
         assertNull(preprocessor.preprocess("帮我看看当前页面应该点哪里"))
     }

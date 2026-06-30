@@ -99,7 +99,9 @@ class DefaultActionExecutor(
                 !success -> FailureType.ACTION_EXECUTION_FAILED
                 else -> null
             },
-            humanizationTrace = humanizationTrace
+            humanizationTrace = humanizationTrace,
+            userInteractionRequest = userInteractionRequest,
+            clipboardTrace = clipboardTrace
         ).withTaskNote()
     }
 

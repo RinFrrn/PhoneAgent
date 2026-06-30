@@ -1,5 +1,7 @@
 package com.mobileagent.phoneagent.harness.act
 
+import com.mobileagent.phoneagent.action.ClipboardTrace
+import com.mobileagent.phoneagent.action.UserInteractionRequest
 import com.mobileagent.phoneagent.harness.recover.FailureType
 import com.mobileagent.phoneagent.harness.trace.TaskNote
 
@@ -20,5 +22,7 @@ data class ExecutionResult(
     val failureType: FailureType? = null,
     val launchTrace: AppLaunchTrace? = null,
     val humanizationTrace: ExecutionHumanizationTrace? = null,
-    val taskNote: TaskNote? = null
+    val taskNote: TaskNote? = null,
+    val userInteractionRequest: UserInteractionRequest? = null,
+    val clipboardTrace: ClipboardTrace? = null
 )

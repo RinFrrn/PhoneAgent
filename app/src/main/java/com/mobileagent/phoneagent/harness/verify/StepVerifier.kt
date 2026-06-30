@@ -2,9 +2,12 @@ package com.mobileagent.phoneagent.harness.verify
 
 import com.mobileagent.phoneagent.action.ActionParser
 import com.mobileagent.phoneagent.action.BackAction
+import com.mobileagent.phoneagent.action.DragAction
 import com.mobileagent.phoneagent.action.FinishAction
 import com.mobileagent.phoneagent.action.HomeAction
+import com.mobileagent.phoneagent.action.KeyEventAction
 import com.mobileagent.phoneagent.action.LaunchAction
+import com.mobileagent.phoneagent.action.RecentAppsAction
 import com.mobileagent.phoneagent.action.SwipeAction
 import com.mobileagent.phoneagent.action.TapAction
 import com.mobileagent.phoneagent.action.TypeAction
@@ -48,6 +51,24 @@ class GenericStepVerifier(
             )
         }
 
+        if (execution.requiresTakeover || execution.userInteractionRequest != null) {
+            return VerificationResult(
+                passed = true,
+                confidence = 1.0f,
+                reason = execution.userInteractionRequest?.let {
+                    "等待用户回答: ${it.question}"
+                } ?: "等待用户介入，无需页面变化验证"
+            )
+        }
+
+        execution.clipboardTrace?.let { trace ->
+            return VerificationResult(
+                passed = trace.success,
+                confidence = 1.0f,
+                reason = trace.toDisplayText()
+            )
+        }
+
         if (after == null || after.failureMessage != null) {
             return VerificationResult(
                 passed = false,
@@ -62,13 +83,16 @@ class GenericStepVerifier(
 
         val action = runCatching { actionParser.parse(execution.actionJson) }.getOrNull()
         if (action == null) {
-            return when (fallbackActionType(execution.actionJson)) {
-                "Tap", "Click" -> verifyTap(before, after)
-                "Swipe" -> verifyScrollableChange(before, after)
-                "Type", "Type_Name" -> verifyType(before, after)
-                "Launch" -> verifyLaunch(before, execution, after)
-                "Back" -> verifyNavigationChange(before, after, "返回动作")
-                "Home" -> verifyNavigationChange(before, after, "主页动作")
+            return when (fallbackActionType(execution.actionJson)?.lowercase()) {
+                "tap", "click" -> verifyTap(before, after)
+                "swipe", "scroll" -> verifyScrollableChange(before, after)
+                "drag" -> verifyGestureChange(before, after, "拖拽动作")
+                "type", "type_name", "input_text" -> verifyType(before, after)
+                "launch", "launch_app" -> verifyLaunch(before, execution, after)
+                "back" -> verifyNavigationChange(before, after, "返回动作")
+                "home" -> verifyNavigationChange(before, after, "主页动作")
+                "press_key" -> verifyPressKeyFallback(before, after, execution.actionJson)
+                "key_event", "keyevent" -> verifyKeyEventFallback(before, after, execution.actionJson)
                 else -> VerificationResult(
                     passed = true,
                     confidence = 0.3f,
@@ -84,7 +108,10 @@ class GenericStepVerifier(
             is LaunchAction -> verifyLaunch(before, execution, after)
             is HomeAction -> verifyNavigationChange(before, after, "主页动作")
             is BackAction -> verifyNavigationChange(before, after, "返回动作")
+            is RecentAppsAction -> verifyNavigationChange(before, after, "最近任务动作")
+            is KeyEventAction -> verifyNavigationChange(before, after, "系统按键事件")
             is SwipeAction -> verifyScrollableChange(before, after)
+            is DragAction -> verifyGestureChange(before, after, "拖拽动作")
             is TapAction -> verifyTap(before, after)
             else -> verifyGenericChange(before, after)
         }
@@ -150,6 +177,25 @@ class GenericStepVerifier(
         }
     }
 
+    private fun verifyGestureChange(before: Observation, after: Observation, label: String): VerificationResult {
+        if (before.currentPackage != after.currentPackage || before.currentApp != after.currentApp) {
+            return VerificationResult(
+                true,
+                0.85f,
+                "$label 后应用上下文变化",
+                "${before.currentPackage ?: before.currentApp} -> ${after.currentPackage ?: after.currentApp}"
+            )
+        }
+
+        val beforeText = before.textDigest()
+        val afterText = after.textDigest()
+        return if (beforeText != afterText) {
+            VerificationResult(true, 0.72f, "$label 后页面内容变化", summarizeDiff(beforeText, afterText))
+        } else {
+            VerificationResult(false, 0.68f, "$label 后页面内容未明显变化")
+        }
+    }
+
     private fun verifyTap(before: Observation, after: Observation): VerificationResult {
         if (before.currentPackage != after.currentPackage || before.currentApp != after.currentApp) {
             return VerificationResult(
@@ -207,6 +253,35 @@ class GenericStepVerifier(
             .find(actionJson)
             ?.groupValues
             ?.getOrNull(1)
+    }
+
+    private fun fallbackActionKey(actionJson: String): String? {
+        return """"key"\s*:\s*"([^"]+)"""".toRegex()
+            .find(actionJson)
+            ?.groupValues
+            ?.getOrNull(1)
+    }
+
+    private fun verifyPressKeyFallback(before: Observation, after: Observation, actionJson: String): VerificationResult {
+        return when (fallbackActionKey(actionJson)?.normalizedKey()) {
+            "back" -> verifyNavigationChange(before, after, "返回动作")
+            "home" -> verifyNavigationChange(before, after, "主页动作")
+            "recent", "recents", "overview" -> verifyNavigationChange(before, after, "最近任务动作")
+            else -> verifyGenericChange(before, after)
+        }
+    }
+
+    private fun verifyKeyEventFallback(before: Observation, after: Observation, actionJson: String): VerificationResult {
+        return when (fallbackActionKey(actionJson)?.normalizedKey()) {
+            "back" -> verifyNavigationChange(before, after, "返回动作")
+            "home" -> verifyNavigationChange(before, after, "主页动作")
+            "recent", "recents", "overview" -> verifyNavigationChange(before, after, "最近任务动作")
+            else -> verifyNavigationChange(before, after, "系统按键事件")
+        }
+    }
+
+    private fun String.normalizedKey(): String {
+        return trim().replace("-", "_").lowercase()
     }
 
     private fun summarizeDiff(before: String, after: String): String {

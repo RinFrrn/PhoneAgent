@@ -46,6 +46,7 @@ class TaskPreprocessor {
         parseHome(task)?.let { return it }
         parseBack(task)?.let { return it }
         parseWait(task)?.let { return it }
+        parseScreenSnapshot(task)?.let { return it }
         parseLaunch(task)?.let { return it }
 
         return null
@@ -132,6 +133,23 @@ class TaskPreprocessor {
         return null
     }
 
+    private fun parseScreenSnapshot(task: String): TaskPreprocessResult? {
+        val patterns = listOf(
+            Pattern("""^(?:截[个一张]?屏|截图|屏幕截图|保存当前屏幕|记录当前屏幕|问屏)$""", 0.95f),
+            Pattern("""^(?:Screenshot|Capture|Capture screen|Screen capture)$""", 0.95f, setOf(RegexOption.IGNORE_CASE))
+        )
+        val confidence = findPattern(task, patterns) ?: return null
+        val message = "已采集当前屏幕观察并写入本次 Trace；视觉/混合模式包含截图输入，无障碍模式包含结构化屏幕文本。"
+        return TaskPreprocessResult(
+            actionJson = finishActionJson(message),
+            taskType = PreprocessedTaskType.SYSTEM_COMMAND,
+            executor = PreprocessedExecutor.RULE_ENGINE,
+            skipLlm = true,
+            confidence = confidence,
+            reason = "任务预处理命中屏幕观察快照指令：复用本步观察结果写入 Trace，跳过模型请求。"
+        )
+    }
+
     private fun directResult(action: String, confidence: Float, reason: String): TaskPreprocessResult {
         val actionJson = doActionJson(action)
         return TaskPreprocessResult(
@@ -182,6 +200,10 @@ class TaskPreprocessor {
             "," + quoteJson(key) + ":" + quoteJson(value)
         }
         return """{"_metadata":"do","action":${quoteJson(action)}$extraFields}"""
+    }
+
+    private fun finishActionJson(message: String): String {
+        return """{"_metadata":"finish","message":${quoteJson(message)}}"""
     }
 
     private fun quoteJson(value: String): String {

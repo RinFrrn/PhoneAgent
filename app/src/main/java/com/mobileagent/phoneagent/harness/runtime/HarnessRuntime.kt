@@ -281,6 +281,16 @@ class HarnessRuntime(
 
                 sessionMemory.removeImageFromLastUserMessage()
                 sessionMemory.addAssistantResponse(decision.rawResponse)
+                if (execution.clipboardTrace != null && execution.message?.isNotBlank() == true) {
+                    sessionMemory.add(
+                        Message(
+                            "user",
+                            "** 📋 上一步剪贴板结果 **\n" +
+                                "${execution.message}\n\n" +
+                                "请在后续步骤中使用该内容；如果内容是验证码或链接，优先完成用户目标。"
+                        )
+                    )
+                }
                 if (stagnation.ineffective &&
                     stagnation.consecutiveIneffectiveActions >= REPLAN_AFTER_INEFFECTIVE
                 ) {
@@ -302,13 +312,21 @@ class HarnessRuntime(
                 if (effectiveExecution.requiresTakeover && effectiveExecution.message != null) {
                     stateMachine.markWaitingForUser()
                     onUserIntervention?.invoke(effectiveExecution.message)
-                    sessionMemory.addInterventionMessage(effectiveExecution.message)
-                    AgentSessionCoordinator.waitForUserConfirmation(timeoutMs = 180_000)
+                    val userResponse = AgentSessionCoordinator.waitForUserConfirmation(timeoutMs = 180_000)
+                    sessionMemory.addInterventionMessage(
+                        message = effectiveExecution.message,
+                        response = userResponse
+                    )
                     stateMachine.resumeAfterUserIntervention()
                 }
 
+                val terminalRequested = execution.shouldFinish || decision.finishRequested
+                val terminalDecision = RuntimeTerminalOutcome.decide(
+                    terminalRequested = terminalRequested,
+                    execution = effectiveExecution
+                )
                 val status = when {
-                    execution.shouldFinish || decision.finishRequested -> StepStatus.FINISHED
+                    terminalDecision != null -> terminalDecision.stepStatus
                     effectiveExecution.success -> StepStatus.EXECUTED
                     else -> StepStatus.FAILED
                 }
@@ -347,16 +365,23 @@ class HarnessRuntime(
                     )
                 )
 
-                if (execution.shouldFinish || decision.finishRequested) {
-                    stateMachine.markCompleted()
+                if (terminalDecision != null) {
                     val message = effectiveExecution.message ?: "任务完成"
+                    if (terminalDecision.success) {
+                        stateMachine.markCompleted()
+                    } else {
+                        stateMachine.markFailed()
+                    }
                     traceStore.closeSession(
                         traceSessionId,
-                        status = TaskHistoryStatus.SUCCEEDED,
-                        outcomeMessage = message
+                        status = terminalDecision.historyStatus,
+                        outcomeMessage = message,
+                        failureType = terminalDecision.failureType
                     )
-                    learnFromSuccessfulTrace(traceSessionId)
-                    onComplete(TaskOutcome(true, message, traceSessionId))
+                    if (terminalDecision.success) {
+                        learnFromSuccessfulTrace(traceSessionId)
+                    }
+                    onComplete(TaskOutcome(terminalDecision.success, message, traceSessionId))
                     return
                 }
 
@@ -409,7 +434,7 @@ class HarnessRuntime(
     }
 
     private suspend fun collectPostExecutionObservation(execution: ExecutionResult): Observation? {
-        if (execution.shouldFinish || execution.requiresTakeover || !execution.success) {
+        if (execution.shouldFinish || execution.requiresTakeover || execution.clipboardTrace != null || !execution.success) {
             return null
         }
         return try {

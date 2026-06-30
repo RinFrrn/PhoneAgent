@@ -12,7 +12,7 @@ object AgentSessionCoordinator {
 
     private var stopAction: (() -> Unit)? = null
     private var currentTask: String? = null
-    private var pendingUserAction: CompletableDeferred<Unit>? = null
+    private var pendingUserAction: CompletableDeferred<UserActionResponse>? = null
 
     fun register(task: String, onStop: () -> Unit) {
         currentTask = task
@@ -33,26 +33,36 @@ object AgentSessionCoordinator {
         stopAction?.invoke()
     }
 
-    suspend fun waitForUserConfirmation(timeoutMs: Long): Boolean {
+    suspend fun waitForUserConfirmation(timeoutMs: Long): UserActionResponse {
         val deferred = mutex.withLock {
-            CompletableDeferred<Unit>().also { pendingUserAction = it }
+            CompletableDeferred<UserActionResponse>().also { pendingUserAction = it }
         }
 
-        val confirmed = withTimeoutOrNull(timeoutMs) {
+        val response = withTimeoutOrNull(timeoutMs) {
             deferred.await()
-            true
-        } ?: false
+        } ?: UserActionResponse.timeout()
 
         mutex.withLock {
             if (pendingUserAction === deferred) {
                 pendingUserAction = null
             }
         }
-        return confirmed
+        return response
     }
 
-    fun confirmUserAction() {
+    fun confirmUserAction(answer: String? = null) {
         Log.d(TAG, "收到用户已处理确认")
-        pendingUserAction?.complete(Unit)
+        pendingUserAction?.complete(UserActionResponse(answer = answer?.trim().orEmpty()))
+    }
+}
+
+data class UserActionResponse(
+    val answer: String = "",
+    val timedOut: Boolean = false
+) {
+    fun hasAnswer(): Boolean = answer.isNotBlank()
+
+    companion object {
+        fun timeout(): UserActionResponse = UserActionResponse(timedOut = true)
     }
 }

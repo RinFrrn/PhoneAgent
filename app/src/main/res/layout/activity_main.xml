@@ -412,6 +412,24 @@
                     android:textColor="?android:attr/textColorSecondary"
                     android:textSize="13sp" />
 
+                <TextView
+                    android:id="@+id/tvModelUsageTrend"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:text="模型趋势：暂无调用记录"
+                    android:textColor="?android:attr/textColorSecondary"
+                    android:textSize="13sp" />
+
+                <TextView
+                    android:id="@+id/tvTaskHistoryIndexHealth"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:text="历史索引：暂无记录"
+                    android:textColor="?android:attr/textColorSecondary"
+                    android:textSize="13sp" />
+
                 <LinearLayout
                     android:id="@+id/llTaskHistory"
                     android:layout_width="match_parent"

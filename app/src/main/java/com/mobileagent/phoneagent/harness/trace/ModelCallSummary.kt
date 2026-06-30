@@ -8,7 +8,9 @@ data class ModelCallSummary(
     val responseChars: Int,
     val promptTokens: Int? = null,
     val completionTokens: Int? = null,
-    val totalTokens: Int? = null
+    val totalTokens: Int? = null,
+    val estimatedCostUsd: Double? = null,
+    val unestimatedCostCallCount: Int = 0
 ) {
     fun isEmpty(): Boolean = callCount == 0
 
@@ -21,8 +23,16 @@ data class ModelCallSummary(
                 (promptTokens?.let { ", prompt=$it" } ?: "") +
                 (completionTokens?.let { ", completion=$it" } ?: "")
         } ?: "tokens=unknown"
+        val costText = estimatedCostUsd?.let { cost ->
+            " · 估算成本 ${ModelCostEstimator.formatUsd(cost)}" +
+                if (unestimatedCostCallCount > 0) "（$unestimatedCostCallCount 次未估算）" else ""
+        } ?: if (unestimatedCostCallCount > 0) {
+            " · 成本未估算 $unestimatedCostCallCount 次"
+        } else {
+            ""
+        }
         return "模型调用: $callCount 次 · 总耗时 ${totalLatencyMs}ms · 平均 ${averageLatencyMs}ms · " +
-            "请求 ${requestChars} 字符 · 响应 ${responseChars} 字符 · $tokenText"
+            "请求 ${requestChars} 字符 · 响应 ${responseChars} 字符 · $tokenText$costText"
     }
 }
 
@@ -43,6 +53,8 @@ object ModelCallSummaryBuilder {
         val promptTokens = sumNullable(stats.map { it.promptTokens })
         val completionTokens = sumNullable(stats.map { it.completionTokens })
         val totalTokens = sumNullable(stats.map { it.totalTokens })
+        val estimates = stats.map { ModelCostEstimator.estimate(it) }
+        val estimatedCosts = estimates.filterNotNull()
         return ModelCallSummary(
             callCount = stats.size,
             totalLatencyMs = totalLatency,
@@ -51,7 +63,9 @@ object ModelCallSummaryBuilder {
             responseChars = stats.sumOf { it.responseChars },
             promptTokens = promptTokens,
             completionTokens = completionTokens,
-            totalTokens = totalTokens
+            totalTokens = totalTokens,
+            estimatedCostUsd = estimatedCosts.takeIf { it.isNotEmpty() }?.sumOf { it.costUsd },
+            unestimatedCostCallCount = estimates.count { it == null }
         )
     }
 

@@ -11,6 +11,9 @@
  */
 package com.mobileagent.phoneagent.action
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.util.Log
 import com.mobileagent.phoneagent.service.FloatingOverlayService
 import com.mobileagent.phoneagent.service.GestureDisplayBounds
@@ -88,6 +91,38 @@ class ActionHandler(
         }
     }
 
+    private suspend fun executeLinearGesture(
+        label: String,
+        startX: Float,
+        startY: Float,
+        endX: Float,
+        endY: Float,
+        durationMs: Long
+    ): Boolean {
+        return withStatusOverlaySuppressed {
+            val deferred = CompletableDeferred<Boolean>()
+
+            accessibilityService.swipe(startX, startY, endX, endY, durationMs) { result ->
+                Log.d(TAG, "$label 回调结果: $result")
+                if (!deferred.isCompleted) {
+                    deferred.complete(result)
+                }
+            }
+
+            val dispatched = try {
+                withTimeout(durationMs + 2_700L) {
+                    deferred.await()
+                }
+            } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+                Log.e(TAG, "❌ $label 操作超时")
+                false
+            }
+
+            delay(300)
+            dispatched
+        }
+    }
+
     /**
      * 执行具体操作
      */
@@ -98,7 +133,7 @@ class ActionHandler(
         return when (action) {
             is FinishAction -> {
                 ActionResult(
-                    success = true,
+                    success = action.success,
                     shouldFinish = true,
                     message = action.message
                 )
@@ -198,28 +233,7 @@ class ActionHandler(
                 val endY = endAbsY.toFloat()
                 Log.d(TAG, "👆 滑动操作: 相对(${action.startX},${action.startY})->(${action.endX},${action.endY}) 绝对($startX,$startY)->($endX,$endY)")
                 
-                val success = withStatusOverlaySuppressed {
-                    val deferred = CompletableDeferred<Boolean>()
-
-                    accessibilityService.swipe(startX, startY, endX, endY, 300) { result ->
-                        Log.d(TAG, "滑动回调结果: $result")
-                        if (!deferred.isCompleted) {
-                            deferred.complete(result)
-                        }
-                    }
-
-                    val dispatched = try {
-                        withTimeout(3000) {
-                            deferred.await()
-                        }
-                    } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
-                        Log.e(TAG, "❌ 滑动操作超时")
-                        false
-                    }
-
-                    delay(300)
-                    dispatched
-                }
+                val success = executeLinearGesture("滑动", startX, startY, endX, endY, 300L)
                 Log.d(TAG, "滑动操作完成: success=$success")
                 ActionResult(
                     success = success, 
@@ -228,6 +242,35 @@ class ActionHandler(
                         "滑动成功: ($startX, $startY) -> ($endX, $endY)"
                     } else {
                         "滑动失败，可能原因：坐标无效、无障碍服务未启用、手势调度失败"
+                    }
+                )
+            }
+            is DragAction -> {
+                val (startAbsX, startAbsY) = convertRelativeToAbsolute(
+                    action.startX,
+                    action.startY,
+                    gestureBounds
+                )
+                val (endAbsX, endAbsY) = convertRelativeToAbsolute(
+                    action.endX,
+                    action.endY,
+                    gestureBounds
+                )
+                val startX = startAbsX.toFloat()
+                val startY = startAbsY.toFloat()
+                val endX = endAbsX.toFloat()
+                val endY = endAbsY.toFloat()
+                Log.d(TAG, "👆 拖拽操作: 相对(${action.startX},${action.startY})->(${action.endX},${action.endY}) 绝对($startX,$startY)->($endX,$endY), 时长=${action.durationMs}ms")
+
+                val success = executeLinearGesture("拖拽", startX, startY, endX, endY, action.durationMs)
+                Log.d(TAG, "拖拽操作完成: success=$success")
+                ActionResult(
+                    success = success,
+                    shouldFinish = false,
+                    message = if (success) {
+                        "拖拽成功: ($startX, $startY) -> ($endX, $endY), duration=${action.durationMs}ms"
+                    } else {
+                        "拖拽失败，可能原因：坐标无效、无障碍服务未启用、手势调度失败"
                     }
                 )
             }
@@ -379,6 +422,33 @@ class ActionHandler(
                 Log.d(TAG, "主页操作完成: $success")
                 ActionResult(success = success, shouldFinish = false)
             }
+            is RecentAppsAction -> {
+                Log.d(TAG, "▣ 最近任务操作")
+                val success = accessibilityService.performRecent()
+                delay(300)
+                Log.d(TAG, "最近任务操作完成: $success")
+                ActionResult(success = success, shouldFinish = false)
+            }
+            is KeyEventAction -> {
+                Log.d(TAG, "⌨️ 系统按键事件: ${action.key} -> ${action.event}")
+                val success = when (action.event) {
+                    StandardSystemKeyEvent.NOTIFICATIONS -> accessibilityService.performNotifications()
+                    StandardSystemKeyEvent.QUICK_SETTINGS -> accessibilityService.performQuickSettings()
+                    StandardSystemKeyEvent.POWER_DIALOG -> accessibilityService.performPowerDialog()
+                    StandardSystemKeyEvent.LOCK_SCREEN -> accessibilityService.performLockScreen()
+                }
+                delay(300)
+                Log.d(TAG, "系统按键事件完成: $success")
+                ActionResult(
+                    success = success,
+                    shouldFinish = false,
+                    message = if (success) {
+                        "系统按键事件已执行: ${action.key}"
+                    } else {
+                        "系统按键事件执行失败或当前系统不支持: ${action.key}"
+                    }
+                )
+            }
             is WaitAction -> {
                 kotlinx.coroutines.delay(action.durationMs)
                 ActionResult(success = true, shouldFinish = false)
@@ -392,6 +462,31 @@ class ActionHandler(
                     message = action.message
                 )
             }
+            is AskUserAction -> {
+                val request = UserInteractionRequest(
+                    question = action.question,
+                    options = action.options,
+                    reason = action.reason
+                )
+                Log.w(TAG, "❓ 需要用户回答: ${request.toDisplayText()}")
+                ActionResult(
+                    success = true,
+                    shouldFinish = false,
+                    requiresTakeover = true,
+                    message = request.toDisplayText(),
+                    userInteractionRequest = request
+                )
+            }
+            is AnswerAction -> {
+                Log.d(TAG, "💬 回答用户: ${action.answer.take(80)}")
+                ActionResult(
+                    success = action.success,
+                    shouldFinish = true,
+                    message = action.toDisplayText()
+                )
+            }
+            is ReadClipboardAction -> executeReadClipboard(action)
+            is WriteClipboardAction -> executeWriteClipboard(action)
             is NoteAction -> {
                 Log.d(TAG, "📝 记录页面内容: ${action.message}")
                 // Note操作用于记录当前页面内容，实际实现可以根据需求扩展
@@ -412,11 +507,16 @@ class ActionHandler(
             }
             is InteractAction -> {
                 Log.d(TAG, "🤝 需要用户交互选择")
+                val request = UserInteractionRequest(
+                    question = "有多个满足条件的选项，请确认下一步选择",
+                    reason = "候选项不唯一"
+                )
                 ActionResult(
                     success = true,
                     shouldFinish = false,
                     requiresTakeover = true,
-                    message = "需要用户选择：有多个满足条件的选项，请手动选择"
+                    message = request.toDisplayText(),
+                    userInteractionRequest = request
                 )
             }
             is UnknownAction -> {
@@ -429,6 +529,94 @@ class ActionHandler(
         }
     }
 
+    private fun executeReadClipboard(action: ReadClipboardAction): ActionResult {
+        return try {
+            val clipboard = accessibilityService.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            val clip = clipboard.primaryClip
+            val content = clip?.takeIf { it.itemCount > 0 }
+                ?.getItemAt(0)
+                ?.coerceToText(accessibilityService)
+                ?.toString()
+                .orEmpty()
+            val trace = ClipboardTrace(
+                operation = ClipboardOperation.READ,
+                success = content.isNotBlank(),
+                contentPreview = content.previewForTrace(),
+                contentLength = content.length,
+                reason = action.reason
+            )
+            if (content.isBlank()) {
+                return ActionResult(
+                    success = false,
+                    shouldFinish = false,
+                    message = "剪贴板为空或无法读取",
+                    clipboardTrace = trace
+                )
+            }
+            ActionResult(
+                success = true,
+                shouldFinish = false,
+                message = "剪贴板内容: ${content.takeForModel()}",
+                clipboardTrace = trace
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "读取剪贴板失败", e)
+            ActionResult(
+                success = false,
+                shouldFinish = false,
+                message = "读取剪贴板失败: ${e.message}",
+                clipboardTrace = ClipboardTrace(
+                    operation = ClipboardOperation.READ,
+                    success = false,
+                    contentPreview = "",
+                    contentLength = 0,
+                    reason = action.reason
+                )
+            )
+        }
+    }
+
+    private fun executeWriteClipboard(action: WriteClipboardAction): ActionResult {
+        return try {
+            val clipboard = accessibilityService.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            clipboard.setPrimaryClip(ClipData.newPlainText("PhoneAgent", action.text))
+            ActionResult(
+                success = true,
+                shouldFinish = false,
+                message = "已写入剪贴板: ${action.text.previewForTrace()}",
+                clipboardTrace = ClipboardTrace(
+                    operation = ClipboardOperation.WRITE,
+                    success = true,
+                    contentPreview = action.text.previewForTrace(),
+                    contentLength = action.text.length,
+                    reason = action.reason
+                )
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "写入剪贴板失败", e)
+            ActionResult(
+                success = false,
+                shouldFinish = false,
+                message = "写入剪贴板失败: ${e.message}",
+                clipboardTrace = ClipboardTrace(
+                    operation = ClipboardOperation.WRITE,
+                    success = false,
+                    contentPreview = action.text.previewForTrace(),
+                    contentLength = action.text.length,
+                    reason = action.reason
+                )
+            )
+        }
+    }
+
+    private fun String.previewForTrace(maxLength: Int = 100): String {
+        return if (length <= maxLength) this else take(maxLength) + "..."
+    }
+
+    private fun String.takeForModel(maxLength: Int = 2_000): String {
+        return if (length <= maxLength) this else take(maxLength) + "...（已截断，原长度 $length）"
+    }
+
 }
 
 /**
@@ -438,15 +626,60 @@ data class ActionResult(
     val success: Boolean,
     val shouldFinish: Boolean,
     val message: String? = null,
-    val requiresTakeover: Boolean = false
+    val requiresTakeover: Boolean = false,
+    val userInteractionRequest: UserInteractionRequest? = null,
+    val clipboardTrace: ClipboardTrace? = null
 )
+
+enum class ClipboardOperation {
+    READ,
+    WRITE
+}
+
+data class ClipboardTrace(
+    val operation: ClipboardOperation,
+    val success: Boolean,
+    val contentPreview: String,
+    val contentLength: Int,
+    val reason: String = ""
+) {
+    fun toDisplayText(): String {
+        val operationText = when (operation) {
+            ClipboardOperation.READ -> "读取"
+            ClipboardOperation.WRITE -> "写入"
+        }
+        val statusText = if (success) "成功" else "失败"
+        val reasonText = reason.takeIf { it.isNotBlank() }?.let { "，原因: $it" }.orEmpty()
+        val previewText = contentPreview.takeIf { it.isNotBlank() }?.let { "，内容: $it" }.orEmpty()
+        return "剪贴板$operationText$statusText，长度: $contentLength$previewText$reasonText"
+    }
+}
+
+data class UserInteractionRequest(
+    val question: String,
+    val options: List<String> = emptyList(),
+    val reason: String = ""
+) {
+    fun toDisplayText(): String {
+        val optionText = if (options.isEmpty()) {
+            ""
+        } else {
+            " 选项: ${options.joinToString(" / ")}"
+        }
+        val reasonText = reason.takeIf { it.isNotBlank() }?.let { " 原因: $it" }.orEmpty()
+        return "需要用户回答: $question$optionText$reasonText"
+    }
+}
 
 /**
  * 操作基类
  */
 sealed class Action
 
-data class FinishAction(val message: String) : Action()
+data class FinishAction(
+    val message: String,
+    val success: Boolean = true
+) : Action()
 data class TapAction(val x: Int, val y: Int, val message: String? = null) : Action()
 data class TypeAction(val text: String) : Action()
 data class SwipeAction(
@@ -455,13 +688,46 @@ data class SwipeAction(
     val endX: Int,
     val endY: Int
 ) : Action()
+data class DragAction(
+    val startX: Int,
+    val startY: Int,
+    val endX: Int,
+    val endY: Int,
+    val durationMs: Long = 500L
+) : Action()
 data class LongPressAction(val x: Int, val y: Int) : Action()
 data class DoubleTapAction(val x: Int, val y: Int) : Action()
 data class LaunchAction(val appName: String) : Action()
 object BackAction : Action()
 object HomeAction : Action()
+object RecentAppsAction : Action()
+data class KeyEventAction(
+    val key: String,
+    val event: StandardSystemKeyEvent
+) : Action()
 data class WaitAction(val durationMs: Long) : Action()
 data class TakeOverAction(val message: String) : Action()
+data class AnswerAction(
+    val answer: String,
+    val success: Boolean = true,
+    val reason: String = ""
+) : Action() {
+    fun toDisplayText(): String {
+        val answerText = answer.ifBlank { "未提供答案内容" }
+        val reasonText = reason.takeIf { it.isNotBlank() }?.let { " 原因: $it" }.orEmpty()
+        return "回答用户: $answerText$reasonText"
+    }
+}
+data class AskUserAction(
+    val question: String,
+    val options: List<String> = emptyList(),
+    val reason: String = ""
+) : Action()
+data class ReadClipboardAction(val reason: String = "") : Action()
+data class WriteClipboardAction(
+    val text: String,
+    val reason: String = ""
+) : Action()
 data class NoteAction(val message: String) : Action()
 data class CallAPIAction(val instruction: String) : Action()
 object InteractAction : Action()

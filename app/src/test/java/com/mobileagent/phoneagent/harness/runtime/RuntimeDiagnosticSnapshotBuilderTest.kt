@@ -3,9 +3,11 @@ package com.mobileagent.phoneagent.harness.runtime
 import com.mobileagent.phoneagent.agent.Mode
 import com.mobileagent.phoneagent.harness.act.ExecutionHumanizationProfile
 import com.mobileagent.phoneagent.harness.trace.ModelCallSummary
+import com.mobileagent.phoneagent.harness.trace.ModelUsageTrendReport
 import com.mobileagent.phoneagent.harness.trace.RecentTaskPerformanceSummary
 import com.mobileagent.phoneagent.harness.trace.TaskHistoryEntry
 import com.mobileagent.phoneagent.harness.trace.TaskHistoryStatus
+import com.mobileagent.phoneagent.harness.trace.TraceStorageReport
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -97,6 +99,78 @@ class RuntimeDiagnosticSnapshotBuilderTest {
         assertEquals(RuntimeDiagnosticLevel.DEGRADED, snapshot.level)
         assertTrue(snapshot.compactText().contains("需关注"))
         assertTrue(snapshot.detailText().contains("最新历史: 测试任务 / FAILED"))
+    }
+
+    @Test
+    fun traceStorageWarningsAppearInDiagnosticText() {
+        val snapshot = RuntimeDiagnosticSnapshotBuilder.build(
+            running = false,
+            mode = Mode.ACCESSIBILITY,
+            modelLabel = "OpenAI · gpt",
+            readiness = RunReadinessChecker.evaluate(
+                modelConfigured = true,
+                accessibilityEnabled = true,
+                overlayEnabled = true,
+                notificationEnabled = true,
+                mode = Mode.ACCESSIBILITY,
+                screenCaptureReady = true,
+                humanizationEnabled = false
+            ),
+            humanizationProfile = ExecutionHumanizationProfile(),
+            recentSummary = emptyRecentSummary(),
+            history = emptyList(),
+            traceStorageReport = TraceStorageReport(
+                traceFileCount = 501,
+                historyCount = 190,
+                totalBytes = 60L * 1024L * 1024L,
+                largestTraceBytes = 1024L,
+                oldestTraceAt = 1L,
+                newestTraceAt = 2L,
+                historyReadable = true,
+                warnings = listOf("Trace 文件较多，建议导出后清理旧任务")
+            ),
+            generatedAt = 1L
+        )
+
+        assertTrue(snapshot.compactText().contains("Trace需关注"))
+        assertTrue(snapshot.detailText().contains("Trace 存储: 501 个文件"))
+        assertTrue(snapshot.detailText().contains("Trace 文件较多"))
+    }
+
+    @Test
+    fun diagnosticDetailIncludesModelUsageTrend() {
+        val snapshot = RuntimeDiagnosticSnapshotBuilder.build(
+            running = false,
+            mode = Mode.ACCESSIBILITY,
+            modelLabel = "OpenAI · gpt",
+            readiness = RunReadinessChecker.evaluate(
+                modelConfigured = true,
+                accessibilityEnabled = true,
+                overlayEnabled = true,
+                notificationEnabled = true,
+                mode = Mode.ACCESSIBILITY,
+                screenCaptureReady = true,
+                humanizationEnabled = false
+            ),
+            humanizationProfile = ExecutionHumanizationProfile(),
+            recentSummary = emptyRecentSummary(),
+            history = emptyList(),
+            modelUsageTrend = ModelUsageTrendReport(
+                sessionCount = 2,
+                sessionsWithCalls = 1,
+                callCount = 3,
+                averageLatencyMs = 1200L,
+                slowCallCount = 0,
+                heavyContextCallCount = 0,
+                missingUsageCallCount = 1,
+                totalTokens = 90,
+                topModelLabel = "OPENAI/gpt"
+            ),
+            generatedAt = 1L
+        )
+
+        assertTrue(snapshot.detailText().contains("模型趋势：3 次/1 任务"))
+        assertTrue(snapshot.detailText().contains("缺 usage: 1"))
     }
 
     private fun emptyRecentSummary(): RecentTaskPerformanceSummary {

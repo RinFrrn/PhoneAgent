@@ -56,15 +56,27 @@ object SystemPromptBuilder {
             - do(action="Type_Name", text="xxx", purpose="输入联系人姓名")  
                 Type_Name是输入人名的操作，基本功能同Type。
             - do(action="Interact", purpose="有多个候选项，需要用户确认选择")  
-                Interact是当有多个满足条件的选项时而触发的交互操作，询问用户如何选择。
+                Interact是旧版交互操作；优先使用 Ask_User。
+            - do(action="Ask_User", question="发现多个候选项，请选择哪一个？", options=["选项A","选项B"], reason="候选项不唯一")  
+                Ask_User用于暂停自动化并请求用户明确回答。仅在无法可靠自动判断、登录验证、敏感决策或候选项不唯一时使用；问题要具体，options可省略。
             - do(action="Swipe", start=[x1,y1], end=[x2,y2], purpose="向上滑动列表，继续查找目标内容")  
                 Swipe是滑动操作。坐标系统从左上角 (0,0) 开始到右下角（999,999)结束。
+            - do(action="swipe", direction="up", reason="继续查找目标内容") 或 do(action="scroll", coordinates=[500,540], value=360, reason="滚动列表")  
+                兼容标准JSON方向滑动/滚动。direction可为up/down/left/right；scroll的value为正数表示向上滚动，负数表示向下滚动。
+            - do(action="drag", start=[x1,y1], end=[x2,y2], duration=500, reason="拖动滑块或调整目标位置")
+                Drag是拖拽操作，适合滑块验证、拖动排序、地图/画布目标拖移。坐标使用0-1000归一化坐标。
             - do(action="Note", content="xxx", category="price/contact/url/account/other", reason="为什么需要记录")  
                 记录当前页面的重要内容，适合价格、联系人、订单号、链接、账号状态等后续需要引用的信息。
             - do(action="Note", todos="- [ ] xxx\n- [x] xxx", reason="更新任务进度")  
                 记录或更新复杂任务的 TODO 列表，便于后续总结和 trace 回看。
             - do(action="Call_API", instruction="xxx")  
                 总结或评论当前页面或已记录的内容。
+            - do(action="Answer", answer="xxx", success=true, reason="返回查询结果")  
+                Answer用于直接向用户提供查询、总结、推荐或信息提取结果，并结束任务；信息类任务优先使用 Answer，而不是只用 finish 简单确认。
+            - do(action="Read_Clipboard", reason="获取用户复制的验证码")  
+                Read_Clipboard用于读取设备剪贴板内容，适合验证码、链接、复制文本和验证复制结果；读取成功后系统会把内容反馈到下一步上下文。
+            - do(action="Write_Clipboard", text="xxx", reason="准备长文本供粘贴")  
+                Write_Clipboard用于把长文本写入剪贴板，后续可点击输入框并粘贴，或让用户手动粘贴。
             - do(action="Long Press", element=[x,y])  
                 Long Press是长按操作。
             - do(action="Double Tap", element=[x,y])  
@@ -75,6 +87,10 @@ object SystemPromptBuilder {
                 导航返回到上一个屏幕或关闭当前对话框。
             - do(action="Home") 
                 Home是回到系统桌面的操作。
+            - do(action="press_key", key="recent", reason="切换或检查后台应用")
+                兼容标准JSON系统按键。key可为back/home/recent，recent会打开系统最近任务视图。
+            - do(action="key_event", key="notifications", reason="查看通知中的验证码或系统提示")
+                兼容标准JSON系统事件。仅支持无障碍可执行的 notifications/quick_settings/power_dialog/lock_screen，以及back/home/recent；不要假设可以执行任意硬件键。
             - do(action="Wait", duration="x seconds")  
                 等待页面加载，x为需要等待多少秒。
             - finish(message="xxx")  
@@ -101,7 +117,11 @@ object SystemPromptBuilder {
             17. 如果没有合适的搜索结果，可能是因为搜索页面不对，请返回到搜索页面的上一级尝试重新搜索。
             18. 在结束任务前请一定要仔细检查任务是否完整准确的完成。
             19. 必须确认用户的最终目标完成才可以使用finish，否则禁止使用finish。
-            20. 禁止输出<answer>{action}</answer>以外的任何内容。
+            20. 当页面需要验证码、登录、人脸/支付确认、隐私授权，或多个候选项无法可靠判断时，使用 Ask_User 向用户提问，避免盲目点击。
+            21. 当任务目标是查询、总结、推荐或提取信息时，完成后使用 Answer 返回详细结果；只有操作型任务才优先使用 finish。
+            22. 当需要使用用户复制的验证码、链接或跨应用文本时，使用 Read_Clipboard；当需要输入很长文本或绕过输入限制时，可以先用 Write_Clipboard。
+            23. 兼容标准JSON动作名：tap/input_text/launch_app/done/record_important_content/generate_or_update_todos/read_clipboard/write_clipboard/swipe(direction)/scroll/drag/press_key(back|home|recent)/key_event(notifications|quick_settings|power_dialog|lock_screen)。若使用标准JSON，仍必须包在<answer>...</answer>内。
+            24. 禁止输出<answer>{action}</answer>以外的任何内容。
         """.trimIndent()
     }
 }

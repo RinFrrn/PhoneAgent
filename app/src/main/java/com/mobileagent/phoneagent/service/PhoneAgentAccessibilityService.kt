@@ -719,6 +719,45 @@ class PhoneAgentAccessibilityService : AccessibilityService() {
     }
 
     /**
+     * 最近任务
+     */
+    fun performRecent(): Boolean {
+        return performGlobalAction(GLOBAL_ACTION_RECENTS)
+    }
+
+    /**
+     * 通知栏
+     */
+    fun performNotifications(): Boolean {
+        return performGlobalAction(GLOBAL_ACTION_NOTIFICATIONS)
+    }
+
+    /**
+     * 快捷设置
+     */
+    fun performQuickSettings(): Boolean {
+        return performGlobalAction(GLOBAL_ACTION_QUICK_SETTINGS)
+    }
+
+    /**
+     * 电源菜单
+     */
+    fun performPowerDialog(): Boolean {
+        return performGlobalAction(GLOBAL_ACTION_POWER_DIALOG)
+    }
+
+    /**
+     * 锁屏
+     */
+    fun performLockScreen(): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            performGlobalAction(GLOBAL_ACTION_LOCK_SCREEN)
+        } else {
+            false
+        }
+    }
+
+    /**
      * 获取当前前台应用的包名
      */
     fun getCurrentPackageName(): String? {

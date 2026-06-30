@@ -32,7 +32,16 @@ object TaskNoteExtractor {
         val json = runCatching {
             JsonParser.parseString(actionJson).asJsonObject
         }.getOrNull() ?: return null
-        if (json.optString("_metadata") != "do" || json.optString("action") != "Note") {
+        val action = json.optString("action").lowercase()
+        val isDoAction = json.optString("_metadata").let { it.isBlank() || it == "do" }
+        val noteLikeAction = action in setOf(
+            "note",
+            "record_important_content",
+            "record",
+            "generate_or_update_todos",
+            "todos"
+        )
+        if (!isDoAction || !noteLikeAction) {
             return null
         }
 

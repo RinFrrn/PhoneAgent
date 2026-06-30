@@ -48,13 +48,11 @@ class SessionMemory(
         )
     }
 
-    fun addInterventionMessage(message: String) {
+    fun addInterventionMessage(message: String, response: UserActionResponse? = null) {
         messages.add(
             Message(
                 "user",
-                "** ⚠️ 用户介入提示 **\n" +
-                    "$message\n\n" +
-                    "用户已完成介入操作，请继续执行任务。分析当前屏幕状态，继续下一步操作。"
+                UserInterventionMemoryFormatter.format(message, response)
             )
         )
     }
@@ -248,5 +246,22 @@ class SessionMemory(
             val stepCount = oldMessages.count { it.role == "user" }
             "已执行约 $stepCount 步操作，继续执行任务。如果遇到问题，请尝试不同的方法。"
         }
+    }
+}
+
+object UserInterventionMemoryFormatter {
+    fun format(message: String, response: UserActionResponse?): String {
+        val answerText = when {
+            response?.timedOut == true ->
+                "等待用户回答超时，未收到确认或回答。请基于当前屏幕谨慎继续；如果仍需要用户决策，请再次使用 Ask_User。"
+            response?.hasAnswer() == true ->
+                "用户回答: ${response.answer}"
+            else ->
+                "用户已完成介入操作。"
+        }
+        return "** ⚠️ 用户介入提示 **\n" +
+            "$message\n\n" +
+            "$answerText\n" +
+            "请继续执行任务。分析当前屏幕状态，继续下一步操作。"
     }
 }
