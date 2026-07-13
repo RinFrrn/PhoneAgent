@@ -38,7 +38,9 @@ data class SessionTrace(
     val success: Boolean? = null,
     val outcomeMessage: String? = null,
     val totalSteps: Int = 0,
-    val steps: List<StepTrace> = emptyList()
+    val steps: List<StepTrace> = emptyList(),
+    val status: TaskHistoryStatus? = null,
+    val dataPolicy: String? = null
 )
 
 enum class TaskHistoryStatus {

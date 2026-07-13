@@ -29,7 +29,7 @@ Replace the opaque agent loop with a runtime that can be verified, traced, and e
 21. Sanitize sensitive data in displayed and exported logs
 22. Export sanitized task trace text from the trace detail screen
 23. Search and filter task trace logs locally
-24. Persist trace
+24. Persist a minimized session snapshot at session start and after every step using atomic file replacement
 25. Inspect trace storage size and surface storage warnings in diagnostics
 26. Preview and clean old orphan trace files from the trace detail screen
 27. Audit task history index health for missing traces and stale running entries
@@ -101,6 +101,8 @@ Replace the opaque agent loop with a runtime that can be verified, traced, and e
 - Bundled app launch aliases: done
 - Generic verifier: done
 - Trace persistence: done
+- Crash-resilient per-step atomic trace persistence: done
+- At-rest trace image removal and sensitive field minimization: done
 - Trace storage inspection in diagnostics: done
 - Old orphan trace cleanup: done
 - Task history index health: done

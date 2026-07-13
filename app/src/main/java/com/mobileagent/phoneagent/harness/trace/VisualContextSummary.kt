@@ -92,6 +92,10 @@ object VisualContextSummaryBuilder {
     private fun imageLengths(observation: Observation): List<Int> {
         return observation.contentItems
             .filter { it.type == "image_url" }
-            .mapNotNull { it.imageUrl?.url?.length }
+            .mapNotNull { item ->
+                item.imageUrl?.url?.let { url ->
+                    TraceSanitizer.redactedImageLength(url) ?: url.length
+                }
+            }
     }
 }
