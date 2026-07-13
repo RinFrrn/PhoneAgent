@@ -109,7 +109,8 @@ class ActionParser {
                 options = parseOptions(json.optJSONArray("options")),
                 reason = json.optString("reason", "").ifBlank {
                     json.optString("purpose", "")
-                }
+                },
+                kind = UserInteractionKind.fromWireValue(json.optString("interaction_kind", ""))
             )
             "record_important_content", "record" -> NoteAction(
                 json.optString("content", "").ifBlank { json.optString("message", "True") }

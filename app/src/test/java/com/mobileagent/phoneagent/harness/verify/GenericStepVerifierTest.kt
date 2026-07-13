@@ -7,6 +7,7 @@ import com.mobileagent.phoneagent.harness.act.AppLaunchStatus
 import com.mobileagent.phoneagent.harness.act.AppLaunchStrategy
 import com.mobileagent.phoneagent.harness.act.AppLaunchTrace
 import com.mobileagent.phoneagent.harness.act.ExecutionResult
+import com.mobileagent.phoneagent.harness.act.TerminalVerificationRequirement
 import com.mobileagent.phoneagent.harness.observe.Observation
 import com.mobileagent.phoneagent.harness.spec.TaskSpec
 import com.mobileagent.phoneagent.model.ContentItem
@@ -248,6 +249,67 @@ class GenericStepVerifierTest {
 
         assertTrue(result.passed)
         assertTrue(result.reason.contains("剪贴板读取成功"))
+    }
+
+    @Test
+    fun finishActionFailsWithoutFinalObservation() {
+        val result = verifier.verify(
+            before = Observation(currentApp = "微信", contentItems = emptyList()),
+            execution = ExecutionResult(
+                success = true,
+                shouldFinish = true,
+                message = "任务完成",
+                actionJson = """{"_metadata":"finish","message":"任务完成"}""",
+                terminalVerificationRequirement = TerminalVerificationRequirement.FINAL_OBSERVATION
+            ),
+            after = null,
+            taskSpec = taskSpec
+        )
+
+        assertFalse(result.passed)
+        assertTrue(result.reason.contains("最终页面状态"))
+    }
+
+    @Test
+    fun finishActionPassesAfterFinalObservationIsCaptured() {
+        val result = verifier.verify(
+            before = Observation(currentApp = "微信", contentItems = emptyList()),
+            execution = ExecutionResult(
+                success = true,
+                shouldFinish = true,
+                message = "任务完成",
+                actionJson = """{"_metadata":"finish","message":"任务完成"}""",
+                terminalVerificationRequirement = TerminalVerificationRequirement.FINAL_OBSERVATION
+            ),
+            after = Observation(
+                currentApp = "微信",
+                currentPackage = "com.tencent.mm",
+                contentItems = listOf(ContentItem(type = "text", text = "张三 发送消息"))
+            ),
+            taskSpec = taskSpec
+        )
+
+        assertTrue(result.passed)
+        assertTrue(result.reason.contains("已采集最终页面状态"))
+    }
+
+    @Test
+    fun informationAnswerCanFinishWithoutPageObservation() {
+        val result = verifier.verify(
+            before = Observation(currentApp = "天气", contentItems = emptyList()),
+            execution = ExecutionResult(
+                success = true,
+                shouldFinish = true,
+                message = "回答用户: 明天晴",
+                actionJson = """{"action":"answer","answer":"明天晴"}""",
+                terminalVerificationRequirement = TerminalVerificationRequirement.NONE
+            ),
+            after = null,
+            taskSpec = taskSpec
+        )
+
+        assertTrue(result.passed)
+        assertTrue(result.reason.contains("无需页面状态验证"))
     }
 
     private fun launchExecution(targetPackage: String): ExecutionResult {

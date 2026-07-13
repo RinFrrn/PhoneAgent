@@ -46,6 +46,7 @@ class TaskPreprocessorTest {
         assertNotNull(result)
         requireNotNull(result)
         assertJsonField(result.actionJson, "action", "Ask_User")
+        assertJsonField(result.actionJson, "interaction_kind", "sensitive_confirmation")
         assertTrue(result.actionJson.contains("确认继续"))
         assertTrue(result.actionJson.contains("取消任务"))
         assertTrue(result.skipLlm)

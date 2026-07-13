@@ -5,6 +5,11 @@ import com.mobileagent.phoneagent.action.UserInteractionRequest
 import com.mobileagent.phoneagent.harness.recover.FailureType
 import com.mobileagent.phoneagent.harness.trace.TaskNote
 
+enum class TerminalVerificationRequirement {
+    NONE,
+    FINAL_OBSERVATION
+}
+
 data class ExecutionRequest(
     val actionJson: String,
     val screenWidth: Int,
@@ -24,5 +29,6 @@ data class ExecutionResult(
     val humanizationTrace: ExecutionHumanizationTrace? = null,
     val taskNote: TaskNote? = null,
     val userInteractionRequest: UserInteractionRequest? = null,
-    val clipboardTrace: ClipboardTrace? = null
+    val clipboardTrace: ClipboardTrace? = null,
+    val terminalVerificationRequirement: TerminalVerificationRequirement = TerminalVerificationRequirement.FINAL_OBSERVATION
 )

@@ -253,7 +253,7 @@ object UserInterventionMemoryFormatter {
     fun format(message: String, response: UserActionResponse?): String {
         val answerText = when {
             response?.timedOut == true ->
-                "等待用户回答超时，未收到确认或回答。请基于当前屏幕谨慎继续；如果仍需要用户决策，请再次使用 Ask_User。"
+                "等待用户回答超时，未收到确认或回答。不得假定用户已经同意；如果仍需要用户决策，请再次使用 Ask_User 或明确结束任务。"
             response?.hasAnswer() == true ->
                 "用户回答: ${response.answer}"
             else ->

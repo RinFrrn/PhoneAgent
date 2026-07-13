@@ -13,8 +13,14 @@
 - `APP_LAUNCH_BLOCKED`
 - `APP_LAUNCH_CONFIRMATION_REQUIRED`
 - `APP_LAUNCH_TARGET_NOT_REACHED`
+- `SENSITIVE_CONFIRMATION_REQUIRED`
+- `RECORDED_TARGET_MISSING`
+- `RECORDED_STATE_TIMEOUT`
+- `RECORDED_OBSTRUCTION_DETECTED`
 - `PERMISSION_MISSING`
 - `USER_TAKEOVER_REQUIRED`
+- `USER_DENIED`
+- `USER_INTERVENTION_TIMEOUT`
 - `TASK_STOPPED`
 - `MAX_STEPS_EXCEEDED`
 - `UNKNOWN`
@@ -23,4 +29,5 @@
 
 - Model failures should be separated from execution failures.
 - Verification failures should not be merged into generic action failures.
+- Sensitive confirmations must stop on explicit denial, blank confirmation, or timeout.
 - Failure types should support reporting first, then recovery policy.

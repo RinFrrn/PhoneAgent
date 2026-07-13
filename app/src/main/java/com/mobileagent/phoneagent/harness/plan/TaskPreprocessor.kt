@@ -63,7 +63,8 @@ class TaskPreprocessor {
             "Ask_User",
             "question" to question,
             "options" to listOf("确认继续", "取消任务"),
-            "reason" to "敏感任务需要用户明确确认"
+            "reason" to "敏感任务需要用户明确确认",
+            "interaction_kind" to "sensitive_confirmation"
         )
         return TaskPreprocessResult(
             actionJson = actionJson,

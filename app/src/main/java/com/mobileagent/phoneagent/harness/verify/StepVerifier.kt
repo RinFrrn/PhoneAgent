@@ -13,6 +13,7 @@ import com.mobileagent.phoneagent.action.TapAction
 import com.mobileagent.phoneagent.action.TypeAction
 import com.mobileagent.phoneagent.action.WaitAction
 import com.mobileagent.phoneagent.harness.act.ExecutionResult
+import com.mobileagent.phoneagent.harness.act.TerminalVerificationRequirement
 import com.mobileagent.phoneagent.harness.observe.Observation
 import com.mobileagent.phoneagent.harness.spec.TaskSpec
 import kotlin.math.min
@@ -44,10 +45,25 @@ class GenericStepVerifier(
         }
 
         if (execution.shouldFinish) {
+            if (execution.terminalVerificationRequirement == TerminalVerificationRequirement.FINAL_OBSERVATION) {
+                if (after == null || after.failureMessage != null || after.contentItems.isEmpty()) {
+                    return VerificationResult(
+                        passed = false,
+                        confidence = 0.95f,
+                        reason = after?.failureMessage ?: "任务结束前未能采集有效的最终页面状态"
+                    )
+                }
+                return VerificationResult(
+                    passed = true,
+                    confidence = 0.6f,
+                    reason = "任务结束前已采集最终页面状态",
+                    observedChange = after.currentPackage ?: after.currentApp
+                )
+            }
             return VerificationResult(
                 passed = true,
                 confidence = 1.0f,
-                reason = "任务显式结束"
+                reason = "信息返回动作显式结束，无需页面状态验证"
             )
         }
 

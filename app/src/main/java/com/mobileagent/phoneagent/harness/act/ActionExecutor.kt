@@ -2,8 +2,10 @@ package com.mobileagent.phoneagent.harness.act
 
 import android.content.Context
 import android.util.Log
+import com.mobileagent.phoneagent.action.Action
 import com.mobileagent.phoneagent.action.ActionParser
 import com.mobileagent.phoneagent.action.ActionHandler
+import com.mobileagent.phoneagent.action.FinishAction
 import com.mobileagent.phoneagent.action.LaunchAction
 import com.mobileagent.phoneagent.harness.recover.FailureType
 import com.mobileagent.phoneagent.harness.trace.TaskNoteExtractor
@@ -43,7 +45,9 @@ class DefaultActionExecutor(
                 request.screenHeight
             )
             if (primaryResult.success) {
-                return primaryResult.toExecutionResult(humanized.actionJson, humanized.trace)
+                return primaryResult
+                    .toExecutionResult(humanized.actionJson, humanized.trace)
+                    .withTerminalVerificationRequirement(action)
             }
 
             val fallbackActions = skillActionInterceptor.fallbackActions(
@@ -63,13 +67,21 @@ class DefaultActionExecutor(
                     request.screenHeight
                 )
                 if (fallbackResult.success) {
+                    val fallbackParsedAction = runCatching {
+                        actionParser.parse(fallbackHumanized.actionJson)
+                    }.getOrNull()
                     return fallbackResult.copy(
                         message = "Skill fallback 执行成功: ${fallbackResult.message ?: fallbackHumanized.actionJson}"
-                    ).toExecutionResult(fallbackHumanized.actionJson, fallbackHumanized.trace ?: humanized.trace)
+                    ).toExecutionResult(
+                        fallbackHumanized.actionJson,
+                        fallbackHumanized.trace ?: humanized.trace
+                    ).withTerminalVerificationRequirement(fallbackParsedAction)
                 }
             }
 
-            primaryResult.toExecutionResult(humanized.actionJson, humanized.trace)
+            primaryResult
+                .toExecutionResult(humanized.actionJson, humanized.trace)
+                .withTerminalVerificationRequirement(action)
         } catch (e: Exception) {
             Log.e(tag, "执行动作失败", e)
             ExecutionResult(
@@ -124,5 +136,15 @@ class DefaultActionExecutor(
         } else {
             copy(humanizationTrace = humanizationTrace)
         }
+    }
+
+    private fun ExecutionResult.withTerminalVerificationRequirement(action: Action?): ExecutionResult {
+        return copy(
+            terminalVerificationRequirement = if (action is FinishAction) {
+                TerminalVerificationRequirement.FINAL_OBSERVATION
+            } else {
+                TerminalVerificationRequirement.NONE
+            }
+        )
     }
 }

@@ -1,5 +1,7 @@
 package com.mobileagent.phoneagent.harness.recover
 
+import com.mobileagent.phoneagent.action.UserInteractionKind
+import com.mobileagent.phoneagent.action.UserInteractionRequest
 import com.mobileagent.phoneagent.harness.act.ExecutionResult
 import com.mobileagent.phoneagent.harness.observe.Observation
 import com.mobileagent.phoneagent.harness.spec.TaskSpec
@@ -7,7 +9,8 @@ import com.mobileagent.phoneagent.harness.spec.TaskSpec
 data class RecoveryDecision(
     val stopTask: Boolean = false,
     val userMessage: String? = null,
-    val requiresUserTakeover: Boolean = false
+    val requiresUserTakeover: Boolean = false,
+    val userInteractionRequest: UserInteractionRequest? = null
 )
 
 class DefaultRecoveryPolicy {
@@ -45,7 +48,13 @@ class DefaultRecoveryPolicy {
             )
             FailureType.SENSITIVE_CONFIRMATION_REQUIRED -> RecoveryDecision(
                 requiresUserTakeover = true,
-                userMessage = "检测到敏感确认、登录、验证码、支付或订单页面。请用户确认页面内容并手动处理敏感步骤，完成后再继续。"
+                userMessage = "检测到敏感确认、登录、验证码、支付或订单页面。请用户确认页面内容并手动处理敏感步骤；完成后输入“确认继续”，或输入“取消任务”。",
+                userInteractionRequest = UserInteractionRequest(
+                    question = "敏感步骤处理完成后，是否确认继续自动化？",
+                    options = listOf("确认继续", "取消任务"),
+                    reason = "运行中检测到敏感页面，需要用户明确授权",
+                    kind = UserInteractionKind.SENSITIVE_CONFIRMATION
+                )
             )
             FailureType.ACTION_NOT_EFFECTIVE -> RecoveryDecision(
                 userMessage = buildString {
@@ -76,6 +85,14 @@ class DefaultRecoveryPolicy {
             FailureType.USER_TAKEOVER_REQUIRED -> RecoveryDecision(
                 requiresUserTakeover = true,
                 userMessage = execution?.message ?: "需要用户接管"
+            )
+            FailureType.USER_DENIED -> RecoveryDecision(
+                stopTask = true,
+                userMessage = execution?.message ?: "用户未授权继续执行，任务已取消。"
+            )
+            FailureType.USER_INTERVENTION_TIMEOUT -> RecoveryDecision(
+                stopTask = true,
+                userMessage = execution?.message ?: "等待用户明确确认超时，任务已停止。"
             )
             FailureType.MAX_STEPS_EXCEEDED -> RecoveryDecision(
                 stopTask = true,

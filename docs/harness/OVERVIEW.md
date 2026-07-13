@@ -22,37 +22,38 @@ Replace the opaque agent loop with a runtime that can be verified, traced, and e
 14. Execute action with skill fallback
 15. Verify post-action state
 16. Apply app-aware verification rules and sensitive checkpoint detection
-17. Record per-step timing breakdowns and slow-step runtime warnings
-18. Attach runtime step-health warnings when tasks become long, near limits, or near estimated context budget
-19. Extract structured task notes from Note actions
-20. Sanitize sensitive data in displayed and exported logs
-21. Export sanitized task trace text from the trace detail screen
-22. Search and filter task trace logs locally
-23. Persist trace
-24. Inspect trace storage size and surface storage warnings in diagnostics
-25. Preview and clean old orphan trace files from the trace detail screen
-26. Audit task history index health for missing traces and stale running entries
-27. Delete finished task history entries with their trace files after confirmation
-28. Summarize visual context usage from trace observations
-29. Summarize recent model usage trends from trace model-call stats
-30. Record model call statistics in planning traces
-31. Analyze model call health from latency, usage, and context size
-32. Summarize recent task performance from trace history
-33. Analyze recent task health and dominant failure types
-34. Support typed Ask_User interactions for runtime user collaboration
-35. Support typed Answer actions for information-return tasks
-36. Support typed clipboard read/write actions with trace visibility
-37. Accept commercial standard-action aliases from the reference runtime
-38. Map standard direction swipe and scroll actions to executable swipes
-39. Estimate model-call cost from trace usage when pricing is known
-40. Capture optional user answers from Ask_User/takeover overlay and feed them back into planning
-41. Preserve failed terminal actions as failed task outcomes
-42. Preserve user-intervention timeout state in planning memory
-43. Map standard press_key recent/overview actions to the Android recent-apps view
-44. Execute standard drag actions through accessibility gestures
-45. Map supported standard key_event actions to Android accessibility global actions
-46. Parse commercial model response wrappers before action extraction
-47. Evaluate traces offline or through active eval
+17. Require a final observation before accepting explicit Finish actions
+18. Record per-step timing breakdowns and slow-step runtime warnings
+19. Attach runtime step-health warnings when tasks become long, near limits, or near estimated context budget
+20. Extract structured task notes from Note actions
+21. Sanitize sensitive data in displayed and exported logs
+22. Export sanitized task trace text from the trace detail screen
+23. Search and filter task trace logs locally
+24. Persist trace
+25. Inspect trace storage size and surface storage warnings in diagnostics
+26. Preview and clean old orphan trace files from the trace detail screen
+27. Audit task history index health for missing traces and stale running entries
+28. Delete finished task history entries with their trace files after confirmation
+29. Summarize visual context usage from trace observations
+30. Summarize recent model usage trends from trace model-call stats
+31. Record model call statistics in planning traces
+32. Analyze model call health from latency, usage, and context size
+33. Summarize recent task performance from trace history
+34. Analyze recent task health and dominant failure types
+35. Support typed Ask_User interactions for runtime user collaboration
+36. Support typed Answer actions for information-return tasks
+37. Support typed clipboard read/write actions with trace visibility
+38. Accept commercial standard-action aliases from the reference runtime
+39. Map standard direction swipe and scroll actions to executable swipes
+40. Estimate model-call cost from trace usage when pricing is known
+41. Capture optional user answers from Ask_User/takeover overlay and feed them back into planning
+42. Preserve failed terminal actions as failed task outcomes
+43. Preserve user-intervention timeout state in planning memory
+44. Map standard press_key recent/overview actions to the Android recent-apps view
+45. Execute standard drag actions through accessibility gestures
+46. Map supported standard key_event actions to Android accessibility global actions
+47. Parse commercial model response wrappers before action extraction
+48. Evaluate traces offline or through active eval
 
 ## Current Status
 
@@ -67,6 +68,7 @@ Replace the opaque agent loop with a runtime that can be verified, traced, and e
 - Task trace log search: done
 - First-step task preprocessing: done
 - Sensitive task confirmation preprocessing: done
+- Sensitive confirmation denial and timeout termination: done
 - Complex task TODO preprocessing: done
 - Prompt card guidance injection: done
 - Model call statistics in trace: done
@@ -91,6 +93,7 @@ Replace the opaque agent loop with a runtime that can be verified, traced, and e
 - Runtime context budget warnings: done
 - App-specific verifiers: done
 - Sensitive checkpoint verification: done
+- Final observation verification for explicit Finish actions: done
 - Step timing trace and slow-step warnings: done
 - Optional humanized execution trace: done
 - Humanized execution settings UI: done

@@ -35,7 +35,7 @@ class UserInterventionMemoryFormatterTest {
         )
 
         assertTrue(text.contains("等待用户回答超时"))
-        assertTrue(text.contains("再次使用 Ask_User"))
+        assertTrue(text.contains("不得假定用户已经同意"))
         assertTrue(text.contains("需要用户确认支付"))
     }
 }

@@ -1,5 +1,6 @@
 package com.mobileagent.phoneagent.action
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -26,6 +27,15 @@ class UserInteractionRequestTest {
 
         assertTrue(text.contains("推荐 A 餐厅"))
         assertTrue(text.contains("查询结果已确认"))
+    }
+
+    @Test
+    fun interactionKindMapsSensitiveWireValue() {
+        assertEquals(
+            UserInteractionKind.SENSITIVE_CONFIRMATION,
+            UserInteractionKind.fromWireValue("sensitive_confirmation")
+        )
+        assertEquals(UserInteractionKind.QUESTION, UserInteractionKind.fromWireValue(""))
     }
 
     @Test

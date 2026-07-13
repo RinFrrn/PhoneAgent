@@ -34,7 +34,6 @@ class AppAwareStepVerifier(
         AppVerificationRules.detectSensitiveCheckpoint(
             action = action,
             currentApp = after?.currentApp ?: before.currentApp,
-            taskGoal = taskSpec.goal,
             visibleText = afterText
         )?.let { return it }
 
@@ -147,13 +146,12 @@ internal object AppVerificationRules {
     fun detectSensitiveCheckpoint(
         action: Any,
         currentApp: String?,
-        taskGoal: String?,
         visibleText: String
     ): VerificationResult? {
         if (action !is TapAction && action !is TypeAction && action !is BackAction) {
             return null
         }
-        val evidence = listOfNotNull(currentApp, taskGoal, visibleText)
+        val evidence = listOfNotNull(currentApp, visibleText)
             .joinToString("\n")
             .lowercase()
         val matched = SENSITIVE_CHECKPOINT_TOKENS.firstOrNull { token ->

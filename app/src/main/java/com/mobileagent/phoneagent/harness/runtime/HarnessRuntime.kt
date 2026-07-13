@@ -13,6 +13,7 @@ import com.mobileagent.phoneagent.agent.TaskOutcome
 import com.mobileagent.phoneagent.harness.act.ActionExecutor
 import com.mobileagent.phoneagent.harness.act.ExecutionRequest
 import com.mobileagent.phoneagent.harness.act.ExecutionResult
+import com.mobileagent.phoneagent.harness.act.TerminalVerificationRequirement
 import com.mobileagent.phoneagent.harness.learn.LearnedSkillRepository
 import com.mobileagent.phoneagent.harness.learn.TracePathSummarizer
 import com.mobileagent.phoneagent.harness.observe.Observation
@@ -301,7 +302,9 @@ class HarnessRuntime(
                 if (recoveryDecision.requiresUserTakeover || recoveryDecision.userMessage != null) {
                     effectiveExecution = effectiveExecution.copy(
                         requiresTakeover = effectiveExecution.requiresTakeover || recoveryDecision.requiresUserTakeover,
-                        message = recoveryDecision.userMessage ?: effectiveExecution.message
+                        message = recoveryDecision.userMessage ?: effectiveExecution.message,
+                        userInteractionRequest = recoveryDecision.userInteractionRequest
+                            ?: effectiveExecution.userInteractionRequest
                     )
                 }
 
@@ -354,19 +357,47 @@ class HarnessRuntime(
                 )
                 val runtimeWarnings = stepWarnings + timing.warnings()
 
+                var interventionFailureType: FailureType? = null
                 val takeoverMessage = effectiveExecution.message
                 if (effectiveExecution.requiresTakeover && takeoverMessage != null) {
                     stateMachine.markWaitingForUser()
                     onUserIntervention?.invoke(takeoverMessage)
                     val userResponse = AgentSessionCoordinator.waitForUserConfirmation(timeoutMs = 180_000)
-                    sessionMemory.addInterventionMessage(
-                        message = takeoverMessage,
+                    when (UserInterventionOutcomeResolver.resolve(
+                        request = effectiveExecution.userInteractionRequest,
                         response = userResponse
-                    )
+                    )) {
+                        UserInterventionOutcome.CONTINUE -> {
+                            sessionMemory.addInterventionMessage(
+                                message = takeoverMessage,
+                                response = userResponse
+                            )
+                        }
+                        UserInterventionOutcome.DENIED -> {
+                            interventionFailureType = FailureType.USER_DENIED
+                            effectiveExecution = effectiveExecution.copy(
+                                success = false,
+                                requiresTakeover = false,
+                                failureType = interventionFailureType,
+                                message = "未收到明确的“确认继续”，敏感任务已取消。"
+                            )
+                        }
+                        UserInterventionOutcome.TIMED_OUT -> {
+                            interventionFailureType = FailureType.USER_INTERVENTION_TIMEOUT
+                            effectiveExecution = effectiveExecution.copy(
+                                success = false,
+                                requiresTakeover = false,
+                                failureType = interventionFailureType,
+                                message = "等待用户明确确认超时，敏感任务已停止。"
+                            )
+                        }
+                    }
                     stateMachine.resumeAfterUserIntervention()
                 }
 
-                val terminalRequested = execution.shouldFinish || decision.finishRequested
+                val terminalRequested = interventionFailureType != null ||
+                    execution.shouldFinish ||
+                    decision.finishRequested
                 val terminalDecision = RuntimeTerminalOutcome.decide(
                     terminalRequested = terminalRequested,
                     execution = effectiveExecution
@@ -486,7 +517,13 @@ class HarnessRuntime(
     }
 
     private suspend fun collectPostExecutionObservation(execution: ExecutionResult): Observation? {
-        if (execution.shouldFinish || execution.requiresTakeover || execution.clipboardTrace != null || !execution.success) {
+        val terminalObservationNotRequired = execution.shouldFinish &&
+            execution.terminalVerificationRequirement == TerminalVerificationRequirement.NONE
+        if (terminalObservationNotRequired ||
+            execution.requiresTakeover ||
+            execution.clipboardTrace != null ||
+            !execution.success
+        ) {
             return null
         }
         return try {

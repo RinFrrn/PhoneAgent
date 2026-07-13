@@ -466,7 +466,8 @@ class ActionHandler(
                 val request = UserInteractionRequest(
                     question = action.question,
                     options = action.options,
-                    reason = action.reason
+                    reason = action.reason,
+                    kind = action.kind
                 )
                 Log.w(TAG, "❓ 需要用户回答: ${request.toDisplayText()}")
                 ActionResult(
@@ -658,7 +659,8 @@ data class ClipboardTrace(
 data class UserInteractionRequest(
     val question: String,
     val options: List<String> = emptyList(),
-    val reason: String = ""
+    val reason: String = "",
+    val kind: UserInteractionKind = UserInteractionKind.QUESTION
 ) {
     fun toDisplayText(): String {
         val optionText = if (options.isEmpty()) {
@@ -668,6 +670,20 @@ data class UserInteractionRequest(
         }
         val reasonText = reason.takeIf { it.isNotBlank() }?.let { " 原因: $it" }.orEmpty()
         return "需要用户回答: $question$optionText$reasonText"
+    }
+}
+
+enum class UserInteractionKind {
+    QUESTION,
+    SENSITIVE_CONFIRMATION;
+
+    companion object {
+        fun fromWireValue(value: String): UserInteractionKind {
+            return when (value.trim().replace("-", "_").lowercase()) {
+                "sensitive_confirmation", "sensitive_confirm" -> SENSITIVE_CONFIRMATION
+                else -> QUESTION
+            }
+        }
     }
 }
 
@@ -721,7 +737,8 @@ data class AnswerAction(
 data class AskUserAction(
     val question: String,
     val options: List<String> = emptyList(),
-    val reason: String = ""
+    val reason: String = "",
+    val kind: UserInteractionKind = UserInteractionKind.QUESTION
 ) : Action()
 data class ReadClipboardAction(val reason: String = "") : Action()
 data class WriteClipboardAction(
