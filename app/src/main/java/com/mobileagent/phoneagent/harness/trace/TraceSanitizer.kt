@@ -33,6 +33,7 @@ object TraceSanitizer {
             modelName = session.modelName?.let { sanitizeRelatedText(it, sensitiveValues) },
             modelBaseUrl = session.modelBaseUrl?.let { sanitizeRelatedText(it, sensitiveValues) },
             outcomeMessage = session.outcomeMessage?.let { sanitizeRelatedText(it, sensitiveValues) },
+            resumedFromSessionId = sanitizeNullableText(session.resumedFromSessionId),
             totalSteps = session.steps.size,
             steps = session.steps.map { sanitizeStep(it, sensitiveValues) },
             status = session.status ?: inferStatus(session),
@@ -66,7 +67,8 @@ object TraceSanitizer {
             modelDisplayName = sanitizeNullableText(entry.modelDisplayName),
             modelName = sanitizeNullableText(entry.modelName),
             modelBaseUrl = sanitizeNullableText(entry.modelBaseUrl),
-            outcomeMessage = sanitizeNullableText(entry.outcomeMessage)
+            outcomeMessage = sanitizeNullableText(entry.outcomeMessage),
+            resumedFromSessionId = sanitizeNullableText(entry.resumedFromSessionId)
         )
     }
 

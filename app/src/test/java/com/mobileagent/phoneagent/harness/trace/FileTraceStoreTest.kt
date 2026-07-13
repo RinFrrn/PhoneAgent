@@ -137,6 +137,24 @@ class FileTraceStoreTest {
     }
 
     @Test
+    fun resumedSessionPersistsParentTraceLineage() {
+        val store = FileTraceStore(temporaryFolder.root)
+        val sessionId = store.openSession(
+            taskId = "task-resumed",
+            taskGoal = "继续打开设置",
+            mode = "ACCESSIBILITY",
+            resumedFromSessionId = "source-session",
+            resumeStrategy = TraceResumeStrategy.FRESH_OBSERVATION,
+            resumedPriorStepCount = 4
+        )
+
+        assertEquals("source-session", store.loadSession(sessionId)?.resumedFromSessionId)
+        assertEquals("source-session", store.loadRecentHistory().single().resumedFromSessionId)
+        assertEquals(TraceResumeStrategy.FRESH_OBSERVATION, store.loadSession(sessionId)?.resumeStrategy)
+        assertEquals(4, store.loadSession(sessionId)?.resumedPriorStepCount)
+    }
+
+    @Test
     fun persistedTraceRemovesImagePayloadAndSensitiveActionContent() {
         val store = FileTraceStore(temporaryFolder.root)
         val secretText = "payment-password-789"

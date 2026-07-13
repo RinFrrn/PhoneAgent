@@ -55,6 +55,9 @@ import com.mobileagent.phoneagent.harness.runtime.ModelModeAdvisor
 import com.mobileagent.phoneagent.harness.runtime.RunReadinessChecker
 import com.mobileagent.phoneagent.harness.runtime.SystemPromptBuilder
 import com.mobileagent.phoneagent.harness.runtime.TaskRunController
+import com.mobileagent.phoneagent.harness.recover.FailureType
+import com.mobileagent.phoneagent.harness.recover.InterruptedTaskResumeAdvisor
+import com.mobileagent.phoneagent.harness.recover.TaskResumePlan
 import com.mobileagent.phoneagent.harness.act.ExecutionHumanizationSettings
 import com.mobileagent.phoneagent.harness.spec.TaskSpec
 import com.mobileagent.phoneagent.harness.trace.FileTraceStore
@@ -97,6 +100,7 @@ class MainActivity : AppCompatActivity() {
     private var mainStatusDetail: String? = null
     private var isTaskActive = false
     private var pendingQuickAskAfterScreenCapture = false
+    private var pendingResumePlan: TaskResumePlan? = null
     private var recentOverlayStatus = "等待任务"
     private var recentOverlayDetail = "等待第一个执行结果"
     private val traceStore by lazy { FileTraceStore(this) }
@@ -806,6 +810,10 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
+        pendingResumePlan = pendingResumePlan?.takeIf { plan ->
+            plan.taskGoal == task && plan.mode == getSelectedMode().name
+        }
+
         val modelConfig = SettingsActivity.getActiveModelConfig(this)
         if (!modelConfig.isConfigured) {
             Toast.makeText(this, "请先完成模型配置", Toast.LENGTH_LONG).show()
@@ -1018,7 +1026,18 @@ class MainActivity : AppCompatActivity() {
             android.util.Log.d("MainActivity", "应用已进入后台，任务继续在后台执行")
         }
         
-        phoneAgent?.run(task) { result ->
+        val resumePlan = pendingResumePlan?.takeIf { plan ->
+            plan.taskGoal == task && plan.mode == selectedMode.name
+        }
+        pendingResumePlan = null
+        val taskSpec = TaskSpec(
+            id = "task-${System.currentTimeMillis()}",
+            goal = task,
+            mode = selectedMode.name,
+            maxSteps = Int.MAX_VALUE,
+            resumeContext = resumePlan?.context
+        )
+        phoneAgent?.run(taskSpec) { result ->
             android.util.Log.d("MainActivity", "任务结束回调: $result")
             runOnUiThread {
                 appendLog("")
@@ -1456,7 +1475,7 @@ class MainActivity : AppCompatActivity() {
             setBackgroundColor(ContextCompat.getColor(this@MainActivity, R.color.main_surface_variant))
             isClickable = true
             setOnClickListener {
-                openTaskTrace(entry)
+                handleTaskHistoryClick(entry)
             }
             setOnLongClickListener {
                 confirmDeleteTaskHistory(entry)
@@ -1500,6 +1519,59 @@ class MainActivity : AppCompatActivity() {
         startActivity(intent)
     }
 
+    private fun handleTaskHistoryClick(entry: TaskHistoryEntry) {
+        if (
+            entry.status != TaskHistoryStatus.STOPPED ||
+            entry.failureType != FailureType.RUNTIME_INTERRUPTED
+        ) {
+            openTaskTrace(entry)
+            return
+        }
+        val assessment = InterruptedTaskResumeAdvisor.assess(
+            entry = entry,
+            trace = traceStore.loadSession(entry.traceSessionId)
+        )
+        val plan = assessment.plan
+        if (!assessment.canResume() || plan == null) {
+            Toast.makeText(this, assessment.reason, Toast.LENGTH_LONG).show()
+            openTaskTrace(entry)
+            return
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle("安全续跑中断任务")
+            .setMessage(
+                "将创建一个新的 Session，并关联原 Trace ${plan.context.sourceSessionId.take(8)}。\n\n" +
+                    "系统会先重新观察当前屏幕，不会重放旧坐标、旧输入或旧截图。"
+            )
+            .setNegativeButton("取消", null)
+            .setNeutralButton("查看 Trace") { _, _ -> openTaskTrace(entry) }
+            .setPositiveButton("安全续跑") { _, _ -> beginSafeResume(plan) }
+            .show()
+    }
+
+    private fun beginSafeResume(plan: TaskResumePlan) {
+        if (isTaskActive || TaskRunController.isRunning() || phoneAgent?.isTaskRunning() == true) {
+            Toast.makeText(this, "已有任务运行中，暂时不能续跑", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val resumeMode = runCatching { Mode.valueOf(plan.mode) }.getOrNull()
+        if (resumeMode == null) {
+            Toast.makeText(this, "原任务运行模式不受支持", Toast.LENGTH_SHORT).show()
+            return
+        }
+        binding.etTask.setText(plan.taskGoal)
+        binding.modeToggleGroup.check(
+            when (resumeMode) {
+                Mode.VISION -> binding.btnModeVision.id
+                Mode.ACCESSIBILITY -> binding.btnModeAccessibility.id
+                Mode.HYBRID -> binding.btnModeHybrid.id
+            }
+        )
+        pendingResumePlan = plan
+        startTask()
+    }
+
     private fun dp(value: Int): Int {
         return (value * resources.displayMetrics.density).toInt()
     }
@@ -1510,10 +1582,20 @@ class MainActivity : AppCompatActivity() {
     ): String {
         val outcome = entry.outcomeMessage?.take(80) ?: "运行中"
         val indexIssueSuffix = indexHealthReport.issueFor(entry)?.toDisplaySuffix().orEmpty()
+        val resumeSuffix = entry.resumedFromSessionId?.let { " · 续自 ${it.take(8)}" }.orEmpty()
+        val resumableSuffix = if (
+            entry.status == TaskHistoryStatus.STOPPED &&
+            entry.failureType == FailureType.RUNTIME_INTERRUPTED
+        ) {
+            " · 可尝试安全续跑"
+        } else {
+            ""
+        }
         return "${formatHistoryTime(entry.startedAt)} · ${formatHistoryStatus(entry.status)} · ${entry.mode}\n" +
             "模型：${formatHistoryModel(entry)}\n" +
             "${entry.taskGoal}\n" +
-            "$outcome · 步骤 ${entry.totalSteps} · trace ${entry.traceSessionId.take(8)}$indexIssueSuffix"
+            "$outcome · 步骤 ${entry.totalSteps} · trace ${entry.traceSessionId.take(8)}" +
+            "$resumeSuffix$resumableSuffix$indexIssueSuffix"
     }
 
     private fun formatHistoryTime(timestamp: Long): String {

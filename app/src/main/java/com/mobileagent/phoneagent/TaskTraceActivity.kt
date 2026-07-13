@@ -161,6 +161,10 @@ class TaskTraceActivity : AppCompatActivity() {
             appendLine("任务: ${session.taskGoal}")
             appendLine("结果: $outcome · ${session.outcomeMessage ?: "无结果说明"}")
             appendLine("步骤: ${session.totalSteps}")
+            session.failureType?.let { appendLine("失败类型: $it") }
+            session.resumedFromSessionId?.let { sourceSessionId ->
+                appendLine("续跑: ${session.resumeStrategy ?: "未记录"} · 来源 ${sourceSessionId.take(8)} · 原步骤 ${session.resumedPriorStepCount ?: 0}")
+            }
             appendLine("模型: $model")
             appendLine(modelStats.toDisplayText())
             appendLine(visualSummary.toDisplayText())

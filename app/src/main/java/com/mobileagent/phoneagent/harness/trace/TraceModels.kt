@@ -41,8 +41,15 @@ data class SessionTrace(
     val steps: List<StepTrace> = emptyList(),
     val status: TaskHistoryStatus? = null,
     val dataPolicy: String? = null,
-    val failureType: FailureType? = null
+    val failureType: FailureType? = null,
+    val resumedFromSessionId: String? = null,
+    val resumeStrategy: TraceResumeStrategy? = null,
+    val resumedPriorStepCount: Int? = null
 )
+
+enum class TraceResumeStrategy {
+    FRESH_OBSERVATION
+}
 
 enum class TaskHistoryStatus {
     RUNNING,
@@ -67,5 +74,8 @@ data class TaskHistoryEntry(
     val outcomeMessage: String? = null,
     val totalSteps: Int = 0,
     val failureType: FailureType? = null,
-    val traceSessionId: String = sessionId
+    val traceSessionId: String = sessionId,
+    val resumedFromSessionId: String? = null,
+    val resumeStrategy: TraceResumeStrategy? = null,
+    val resumedPriorStepCount: Int? = null
 )

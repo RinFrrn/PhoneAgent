@@ -4,6 +4,7 @@ import android.util.Log
 import com.mobileagent.phoneagent.model.ContentItem
 import com.mobileagent.phoneagent.model.Message
 import com.mobileagent.phoneagent.model.ModelClient
+import com.mobileagent.phoneagent.harness.spec.TaskResumeContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -46,6 +47,10 @@ class SessionMemory(
                     "请根据新的任务目标继续执行。如果新任务与当前状态不符，请先返回或重新开始。"
             )
         )
+    }
+
+    fun addResumeContext(context: TaskResumeContext) {
+        messages.add(Message("user", context.toMemoryText()))
     }
 
     fun addInterventionMessage(message: String, response: UserActionResponse? = null) {

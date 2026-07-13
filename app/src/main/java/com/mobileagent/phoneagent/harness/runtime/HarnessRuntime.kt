@@ -28,6 +28,7 @@ import com.mobileagent.phoneagent.harness.spec.TaskSpec
 import com.mobileagent.phoneagent.harness.trace.StepTrace
 import com.mobileagent.phoneagent.harness.trace.TaskHistoryStatus
 import com.mobileagent.phoneagent.harness.trace.TraceStore
+import com.mobileagent.phoneagent.harness.trace.TraceResumeStrategy
 import com.mobileagent.phoneagent.harness.verify.StepVerifier
 import com.mobileagent.phoneagent.harness.verify.VerificationResult
 import com.mobileagent.phoneagent.model.Message
@@ -82,6 +83,9 @@ class HarnessRuntime(
         onComplete: (TaskOutcome) -> Unit
     ) {
         val session = HarnessSession(taskSpec)
+        taskSpec.resumeContext?.let { resumeContext ->
+            sessionMemory.addResumeContext(resumeContext)
+        }
         val traceSessionId = traceStore.openSession(
             taskId = taskSpec.id,
             taskGoal = taskSpec.goal,
@@ -89,7 +93,10 @@ class HarnessRuntime(
             modelProvider = taskSpec.modelProvider,
             modelDisplayName = taskSpec.modelDisplayName,
             modelName = taskSpec.modelName,
-            modelBaseUrl = taskSpec.modelBaseUrl
+            modelBaseUrl = taskSpec.modelBaseUrl,
+            resumedFromSessionId = taskSpec.resumeContext?.sourceSessionId,
+            resumeStrategy = taskSpec.resumeContext?.let { TraceResumeStrategy.FRESH_OBSERVATION },
+            resumedPriorStepCount = taskSpec.resumeContext?.completedStepCount
         )
 
         try {

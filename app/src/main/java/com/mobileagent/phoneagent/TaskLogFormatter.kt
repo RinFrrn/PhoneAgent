@@ -54,6 +54,12 @@ object TaskLogFormatter {
             appendLine("开始: ${formatTime(session.startedAt)}")
             session.completedAt?.let { appendLine("结束: ${formatTime(it)}") }
             appendLine("结果: ${formatOutcome(session.success, session.outcomeMessage)}")
+            session.failureType?.let { appendLine("失败类型: $it") }
+            session.resumedFromSessionId?.let { sourceSessionId ->
+                appendLine("续跑来源: $sourceSessionId")
+                appendLine("续跑策略: ${session.resumeStrategy ?: "未记录"}")
+                session.resumedPriorStepCount?.let { appendLine("原 Trace 步骤数: $it") }
+            }
             appendLine("步骤数: ${session.totalSteps}")
             val modelSummary = ModelCallSummaryBuilder.summarize(session)
             appendLine(modelSummary.toDisplayText())

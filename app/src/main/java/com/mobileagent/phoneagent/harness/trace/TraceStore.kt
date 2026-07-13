@@ -19,7 +19,10 @@ interface TraceStore {
         modelProvider: String? = null,
         modelDisplayName: String? = null,
         modelName: String? = null,
-        modelBaseUrl: String? = null
+        modelBaseUrl: String? = null,
+        resumedFromSessionId: String? = null,
+        resumeStrategy: TraceResumeStrategy? = null,
+        resumedPriorStepCount: Int? = null
     ): String
 
     fun appendStep(sessionId: String, stepTrace: StepTrace)
@@ -51,7 +54,10 @@ class FileTraceStore(
         modelProvider: String?,
         modelDisplayName: String?,
         modelName: String?,
-        modelBaseUrl: String?
+        modelBaseUrl: String?,
+        resumedFromSessionId: String?,
+        resumeStrategy: TraceResumeStrategy?,
+        resumedPriorStepCount: Int?
     ): String {
         TraceStorageStartup.awaitStartupMaintenance()
         val sessionId = UUID.randomUUID().toString()
@@ -65,6 +71,9 @@ class FileTraceStore(
             modelDisplayName = TraceSanitizer.sanitizeNullableText(modelDisplayName),
             modelName = TraceSanitizer.sanitizeNullableText(modelName),
             modelBaseUrl = TraceSanitizer.sanitizeNullableText(modelBaseUrl),
+            resumedFromSessionId = TraceSanitizer.sanitizeNullableText(resumedFromSessionId),
+            resumeStrategy = resumeStrategy,
+            resumedPriorStepCount = resumedPriorStepCount,
             startedAt = startedAt
         )
         sessions[sessionId] = session
@@ -80,7 +89,10 @@ class FileTraceStore(
                 modelName = session.modelName,
                 modelBaseUrl = session.modelBaseUrl,
                 startedAt = startedAt,
-                status = TaskHistoryStatus.RUNNING
+                status = TaskHistoryStatus.RUNNING,
+                resumedFromSessionId = session.resumedFromSessionId,
+                resumeStrategy = session.resumeStrategy,
+                resumedPriorStepCount = session.resumedPriorStepCount
             )
         )
         return sessionId
@@ -102,7 +114,10 @@ class FileTraceStore(
                 modelBaseUrl = session.modelBaseUrl,
                 startedAt = session.startedAt,
                 status = TaskHistoryStatus.RUNNING,
-                totalSteps = session.steps.size
+                totalSteps = session.steps.size,
+                resumedFromSessionId = session.resumedFromSessionId,
+                resumeStrategy = session.resumeStrategy,
+                resumedPriorStepCount = session.resumedPriorStepCount
             )
         )
     }
@@ -141,7 +156,10 @@ class FileTraceStore(
                 success = success,
                 outcomeMessage = sanitizedOutcome,
                 totalSteps = session.steps.size,
-                failureType = failureType
+                failureType = failureType,
+                resumedFromSessionId = session.resumedFromSessionId,
+                resumeStrategy = session.resumeStrategy,
+                resumedPriorStepCount = session.resumedPriorStepCount
             )
         )
     }
@@ -232,6 +250,9 @@ class FileTraceStore(
         val modelDisplayName: String?,
         val modelName: String?,
         val modelBaseUrl: String?,
+        val resumedFromSessionId: String?,
+        val resumeStrategy: TraceResumeStrategy?,
+        val resumedPriorStepCount: Int?,
         val startedAt: Long,
         val steps: MutableList<StepTrace> = mutableListOf(),
         val sensitiveValues: MutableSet<String> = linkedSetOf()
@@ -269,7 +290,10 @@ class FileTraceStore(
                 steps = steps.toList(),
                 status = status,
                 dataPolicy = TraceSanitizer.DATA_POLICY,
-                failureType = failureType
+                failureType = failureType,
+                resumedFromSessionId = resumedFromSessionId,
+                resumeStrategy = resumeStrategy,
+                resumedPriorStepCount = resumedPriorStepCount
             )
         }
     }
