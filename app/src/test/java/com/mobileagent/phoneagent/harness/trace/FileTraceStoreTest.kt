@@ -95,6 +95,7 @@ class FileTraceStoreTest {
         assertEquals(FailureType.VERIFICATION_FAILED, entry.failureType)
         assertEquals(sessionId, entry.traceSessionId)
         assertNotNull(entry.completedAt)
+        assertEquals(FailureType.VERIFICATION_FAILED, store.loadSession(sessionId)?.failureType)
     }
 
     @Test
@@ -138,13 +139,14 @@ class FileTraceStoreTest {
     @Test
     fun persistedTraceRemovesImagePayloadAndSensitiveActionContent() {
         val store = FileTraceStore(temporaryFolder.root)
+        val secretText = "payment-password-789"
         val sessionId = store.openSession(
             taskId = "task-private",
-            taskGoal = "把验证码 123456 发给 13800138000",
+            taskGoal = "输入 $secretText，把验证码 123456 发给 13800138000",
             mode = "HYBRID"
         )
+        assertFalse(store.loadRecentHistory().single().taskGoal.contains(secretText))
         val imagePayload = "data:image/png;base64," + "A".repeat(1024)
-        val secretText = "payment-password-789"
         store.appendStep(
             sessionId,
             StepTrace(
@@ -199,6 +201,7 @@ class FileTraceStoreTest {
             imagePayload.length,
             VisualContextSummaryBuilder.summarize(persisted).totalImageChars
         )
+        assertFalse(store.loadRecentHistory().single().taskGoal.contains(secretText))
     }
 
     private fun basicStep(): StepTrace {

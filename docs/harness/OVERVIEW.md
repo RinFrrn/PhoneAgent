@@ -103,6 +103,7 @@ Replace the opaque agent loop with a runtime that can be verified, traced, and e
 - Trace persistence: done
 - Crash-resilient per-step atomic trace persistence: done
 - At-rest trace image removal and sensitive field minimization: done
+- Background startup recovery for interrupted sessions and one-time legacy trace minimization migration: done
 - Trace storage inspection in diagnostics: done
 - Old orphan trace cleanup: done
 - Task history index health: done

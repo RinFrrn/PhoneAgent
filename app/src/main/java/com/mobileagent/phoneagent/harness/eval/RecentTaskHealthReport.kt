@@ -174,6 +174,8 @@ object RecentTaskHealthAnalyzer {
                 "近期主要问题是应用启动链路，建议补充应用别名或确认目标应用安装及启动确认弹窗。"
             FailureType.MAX_STEPS_EXCEEDED ->
                 "近期任务容易超步数，建议拆小任务目标或补充更明确的完成条件。"
+            FailureType.RUNTIME_INTERRUPTED ->
+                "近期存在应用进程中断，建议检查系统后台限制、崩溃日志和前台服务状态。"
             FailureType.USER_TAKEOVER_REQUIRED ->
                 "近期任务常需要用户接管，建议把登录、验证码或支付确认等敏感步骤提前标注。"
             null -> when (level) {

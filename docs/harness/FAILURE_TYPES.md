@@ -22,6 +22,7 @@
 - `USER_DENIED`
 - `USER_INTERVENTION_TIMEOUT`
 - `TASK_STOPPED`
+- `RUNTIME_INTERRUPTED`
 - `MAX_STEPS_EXCEEDED`
 - `UNKNOWN`
 
@@ -30,4 +31,5 @@
 - Model failures should be separated from execution failures.
 - Verification failures should not be merged into generic action failures.
 - Sensitive confirmations must stop on explicit denial, blank confirmation, or timeout.
+- Sessions left running by a process interruption must be closed as `RUNTIME_INTERRUPTED` during the next startup.
 - Failure types should support reporting first, then recovery policy.

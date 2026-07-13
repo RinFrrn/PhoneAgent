@@ -20,12 +20,38 @@ import com.mobileagent.phoneagent.utils.LogSanitizer
 object TraceSanitizer {
     const val DATA_POLICY = "MINIMIZED_V1"
 
+    fun sanitizeSession(session: SessionTrace): SessionTrace {
+        val sensitiveValues = session.steps
+            .flatMap(::stepSensitiveValues)
+            .toSet()
+        return session.copy(
+            taskId = sanitizeRelatedText(session.taskId, sensitiveValues),
+            taskGoal = sanitizeRelatedText(session.taskGoal, sensitiveValues),
+            mode = sanitizeText(session.mode),
+            modelProvider = session.modelProvider?.let { sanitizeRelatedText(it, sensitiveValues) },
+            modelDisplayName = session.modelDisplayName?.let { sanitizeRelatedText(it, sensitiveValues) },
+            modelName = session.modelName?.let { sanitizeRelatedText(it, sensitiveValues) },
+            modelBaseUrl = session.modelBaseUrl?.let { sanitizeRelatedText(it, sensitiveValues) },
+            outcomeMessage = session.outcomeMessage?.let { sanitizeRelatedText(it, sensitiveValues) },
+            totalSteps = session.steps.size,
+            steps = session.steps.map { sanitizeStep(it, sensitiveValues) },
+            status = session.status ?: inferStatus(session),
+            dataPolicy = DATA_POLICY
+        )
+    }
+
     fun sanitizeStep(step: StepTrace): StepTrace {
-        val sensitiveValues = stepSensitiveValues(step)
+        return sanitizeStep(step, stepSensitiveValues(step))
+    }
+
+    private fun sanitizeStep(
+        step: StepTrace,
+        sensitiveValues: Collection<String>
+    ): StepTrace {
         return step.copy(
             observationBefore = sanitizeObservation(step.observationBefore, sensitiveValues),
-            decision = step.decision?.let(::sanitizeDecision),
-            execution = step.execution?.let(::sanitizeExecution),
+            decision = step.decision?.let { sanitizeDecision(it, sensitiveValues) },
+            execution = step.execution?.let { sanitizeExecution(it, sensitiveValues) },
             observationAfter = step.observationAfter?.let { sanitizeObservation(it, sensitiveValues) },
             verification = step.verification?.let { sanitizeVerification(it, sensitiveValues) },
             errorMessage = step.errorMessage?.let { sanitizeRelatedText(it, sensitiveValues) },
@@ -56,6 +82,7 @@ object TraceSanitizer {
             .replace(PYTHON_TEXT_FIELD_REGEX) { match ->
                 "${match.groupValues[1]}$REDACTED_TEXT${match.groupValues[3]}"
             }
+            .replace(SECRET_LIKE_TOKEN_REGEX, REDACTED_TEXT)
             .replace(EMAIL_REGEX, REDACTED_EMAIL)
             .replace(LONG_NUMBER_REGEX, REDACTED_NUMBER)
             .replace(SIX_DIGIT_CODE_REGEX, REDACTED_CODE)
@@ -68,7 +95,16 @@ object TraceSanitizer {
         return url.removePrefix(REDACTED_IMAGE_PREFIX).toIntOrNull()
     }
 
-    private fun stepSensitiveValues(step: StepTrace): Set<String> {
+    private fun inferStatus(session: SessionTrace): TaskHistoryStatus {
+        return when {
+            session.completedAt == null -> TaskHistoryStatus.RUNNING
+            session.success == true -> TaskHistoryStatus.SUCCEEDED
+            session.success == false -> TaskHistoryStatus.FAILED
+            else -> TaskHistoryStatus.STOPPED
+        }
+    }
+
+    internal fun stepSensitiveValues(step: StepTrace): Set<String> {
         return buildSet {
             step.decision?.actionJson?.let { addAll(sensitiveActionValues(it)) }
             step.execution?.let { execution ->
@@ -112,8 +148,11 @@ object TraceSanitizer {
         )
     }
 
-    private fun sanitizeDecision(decision: PlanDecision): PlanDecision {
-        val sensitiveValues = sensitiveActionValues(decision.actionJson)
+    private fun sanitizeDecision(
+        decision: PlanDecision,
+        relatedSensitiveValues: Collection<String> = emptySet()
+    ): PlanDecision {
+        val sensitiveValues = sensitiveActionValues(decision.actionJson) + relatedSensitiveValues
         return decision.copy(
             thinking = sanitizeRelatedText(decision.thinking, sensitiveValues),
             rawResponse = sanitizeRelatedText(decision.rawResponse, sensitiveValues),
@@ -123,9 +162,13 @@ object TraceSanitizer {
         )
     }
 
-    private fun sanitizeExecution(execution: ExecutionResult): ExecutionResult {
+    private fun sanitizeExecution(
+        execution: ExecutionResult,
+        relatedSensitiveValues: Collection<String> = emptySet()
+    ): ExecutionResult {
         val sensitiveValues = sensitiveActionValues(execution.actionJson) +
-            listOfNotNull(execution.clipboardTrace?.contentPreview?.takeIf { it.isNotBlank() })
+            listOfNotNull(execution.clipboardTrace?.contentPreview?.takeIf { it.isNotBlank() }) +
+            relatedSensitiveValues
         return execution.copy(
             message = execution.message?.let { sanitizeRelatedText(it, sensitiveValues) },
             actionJson = sanitizeActionJson(execution.actionJson),
@@ -243,7 +286,7 @@ object TraceSanitizer {
         }
     }
 
-    private fun sanitizeRelatedText(value: String, sensitiveValues: Collection<String>): String {
+    internal fun sanitizeRelatedText(value: String, sensitiveValues: Collection<String>): String {
         return sensitiveValues.fold(sanitizeText(value)) { sanitized, sensitiveValue ->
             sanitized.replace(sensitiveValue, REDACTED_TEXT)
         }
@@ -333,6 +376,10 @@ object TraceSanitizer {
     private val JSON_TEXT_FIELD_REGEX = Regex("""(?i)("text"\s*:\s*")((?:\\.|[^"\\])*)(")""")
     private val PYTHON_TEXT_FIELD_REGEX = Regex("""(?i)(\btext\s*=\s*['"])(.*?)(['"])""")
     private val EMAIL_REGEX = Regex("""\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b""", RegexOption.IGNORE_CASE)
+    private val SECRET_LIKE_TOKEN_REGEX = Regex(
+        """(?<![A-Za-z0-9_-])[A-Za-z0-9._-]*(?:password|passwd|pwd|secret|token)[A-Za-z0-9._-]*(?![A-Za-z0-9_-])""",
+        RegexOption.IGNORE_CASE
+    )
     private val LONG_NUMBER_REGEX = Regex("""(?<!\d)\d{12,19}(?!\d)""")
     private val SIX_DIGIT_CODE_REGEX = Regex("""(?<!\d)\d{6}(?!\d)""")
 

@@ -6,12 +6,6 @@ import com.google.gson.GsonBuilder
 import com.google.gson.reflect.TypeToken
 import com.mobileagent.phoneagent.harness.recover.FailureType
 import java.io.File
-import java.io.FileOutputStream
-import java.io.OutputStreamWriter
-import java.nio.charset.StandardCharsets
-import java.nio.file.AtomicMoveNotSupportedException
-import java.nio.file.Files
-import java.nio.file.StandardCopyOption
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -59,12 +53,13 @@ class FileTraceStore(
         modelName: String?,
         modelBaseUrl: String?
     ): String {
+        TraceStorageStartup.awaitStartupMaintenance()
         val sessionId = UUID.randomUUID().toString()
         val startedAt = System.currentTimeMillis()
         val session = MutableSessionTrace(
             sessionId = sessionId,
             taskId = taskId,
-            taskGoal = TraceSanitizer.sanitizeText(taskGoal),
+            taskGoal = taskGoal,
             mode = mode,
             modelProvider = TraceSanitizer.sanitizeNullableText(modelProvider),
             modelDisplayName = TraceSanitizer.sanitizeNullableText(modelDisplayName),
@@ -78,7 +73,7 @@ class FileTraceStore(
             TaskHistoryEntry(
                 sessionId = sessionId,
                 taskId = taskId,
-                taskGoal = session.taskGoal,
+                taskGoal = session.sanitizedTaskGoal(),
                 mode = mode,
                 modelProvider = session.modelProvider,
                 modelDisplayName = session.modelDisplayName,
@@ -93,8 +88,23 @@ class FileTraceStore(
 
     override fun appendStep(sessionId: String, stepTrace: StepTrace) {
         val session = sessions[sessionId] ?: return
-        session.steps.add(TraceSanitizer.sanitizeStep(stepTrace))
+        session.appendStep(stepTrace)
         writeSnapshot(session.toSnapshot(status = TaskHistoryStatus.RUNNING))
+        upsertHistory(
+            TaskHistoryEntry(
+                sessionId = session.sessionId,
+                taskId = session.taskId,
+                taskGoal = session.sanitizedTaskGoal(),
+                mode = session.mode,
+                modelProvider = session.modelProvider,
+                modelDisplayName = session.modelDisplayName,
+                modelName = session.modelName,
+                modelBaseUrl = session.modelBaseUrl,
+                startedAt = session.startedAt,
+                status = TaskHistoryStatus.RUNNING,
+                totalSteps = session.steps.size
+            )
+        )
     }
 
     override fun closeSession(
@@ -111,14 +121,15 @@ class FileTraceStore(
             status = status,
             completedAt = completedAt,
             success = success,
-            outcomeMessage = sanitizedOutcome
+            outcomeMessage = sanitizedOutcome,
+            failureType = failureType
         )
         writeSnapshot(snapshot)
         upsertHistory(
             TaskHistoryEntry(
                 sessionId = session.sessionId,
                 taskId = session.taskId,
-                taskGoal = session.taskGoal,
+                taskGoal = snapshot.taskGoal,
                 mode = session.mode,
                 modelProvider = session.modelProvider,
                 modelDisplayName = session.modelDisplayName,
@@ -159,7 +170,7 @@ class FileTraceStore(
                 root.mkdirs()
             }
             val file = File(root, "session-${snapshot.sessionId}.json")
-            writeAtomically(file, gson.toJson(snapshot))
+            TraceFileWriter.writeAtomically(file, gson.toJson(snapshot))
             logDebug("Trace 已写入: ${file.absolutePath}")
         }.onFailure { error ->
             logError("写入 Trace 失败", error)
@@ -175,7 +186,7 @@ class FileTraceStore(
                 .map(TraceSanitizer::sanitizeHistoryEntry)
                 .sortedByDescending { it.startedAt }
                 .take(MAX_HISTORY_ENTRIES)
-            writeAtomically(historyFile, gson.toJson(history))
+            TraceFileWriter.writeAtomically(historyFile, gson.toJson(history))
             logDebug("任务历史已更新: ${sanitizedEntry.sessionId}")
         }.onFailure { error ->
             logError("写入任务历史失败", error)
@@ -204,42 +215,6 @@ class FileTraceStore(
             .firstOrNull { it.isFile && it.name == "session-$sessionId.json" }
     }
 
-    private fun writeAtomically(file: File, content: String) {
-        file.parentFile?.let { parent ->
-            if (!parent.exists() && !parent.mkdirs()) {
-                error("无法创建目录: ${parent.absolutePath}")
-            }
-        }
-        val tempFile = File(file.parentFile, ".${file.name}.${UUID.randomUUID()}.tmp")
-        try {
-            FileOutputStream(tempFile).use { output ->
-                OutputStreamWriter(output, StandardCharsets.UTF_8).use { writer ->
-                    writer.write(content)
-                    writer.flush()
-                    output.fd.sync()
-                }
-            }
-            try {
-                Files.move(
-                    tempFile.toPath(),
-                    file.toPath(),
-                    StandardCopyOption.ATOMIC_MOVE,
-                    StandardCopyOption.REPLACE_EXISTING
-                )
-            } catch (_: AtomicMoveNotSupportedException) {
-                Files.move(
-                    tempFile.toPath(),
-                    file.toPath(),
-                    StandardCopyOption.REPLACE_EXISTING
-                )
-            }
-        } finally {
-            if (tempFile.exists()) {
-                tempFile.delete()
-            }
-        }
-    }
-
     private fun logDebug(message: String) {
         runCatching { Log.d(tag, message) }
     }
@@ -258,18 +233,29 @@ class FileTraceStore(
         val modelName: String?,
         val modelBaseUrl: String?,
         val startedAt: Long,
-        val steps: MutableList<StepTrace> = mutableListOf()
+        val steps: MutableList<StepTrace> = mutableListOf(),
+        val sensitiveValues: MutableSet<String> = linkedSetOf()
     ) {
+        fun appendStep(stepTrace: StepTrace) {
+            sensitiveValues += TraceSanitizer.stepSensitiveValues(stepTrace)
+            steps += TraceSanitizer.sanitizeStep(stepTrace)
+        }
+
+        fun sanitizedTaskGoal(): String {
+            return TraceSanitizer.sanitizeRelatedText(taskGoal, sensitiveValues)
+        }
+
         fun toSnapshot(
             status: TaskHistoryStatus,
             completedAt: Long? = null,
             success: Boolean? = null,
-            outcomeMessage: String? = null
+            outcomeMessage: String? = null,
+            failureType: FailureType? = null
         ): SessionTrace {
             return SessionTrace(
                 sessionId = sessionId,
                 taskId = taskId,
-                taskGoal = taskGoal,
+                taskGoal = sanitizedTaskGoal(),
                 mode = mode,
                 modelProvider = modelProvider,
                 modelDisplayName = modelDisplayName,
@@ -282,7 +268,8 @@ class FileTraceStore(
                 totalSteps = steps.size,
                 steps = steps.toList(),
                 status = status,
-                dataPolicy = TraceSanitizer.DATA_POLICY
+                dataPolicy = TraceSanitizer.DATA_POLICY,
+                failureType = failureType
             )
         }
     }
