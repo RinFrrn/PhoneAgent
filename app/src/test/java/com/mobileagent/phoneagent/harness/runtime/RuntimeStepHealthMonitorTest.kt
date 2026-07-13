@@ -79,4 +79,29 @@ class RuntimeStepHealthMonitorTest {
         assertTrue(text.contains("执行 300ms"))
         assertTrue(text.contains("验证 400ms"))
     }
+
+    @Test
+    fun contextBudgetWarningsAppearWhenEstimatedUsageCrossesThresholds() {
+        val warningStep = RuntimeStepHealthMonitor.warningsForStep(
+            stepIndex = 22,
+            maxSteps = Int.MAX_VALUE
+        )
+        val criticalStep = RuntimeStepHealthMonitor.warningsForStep(
+            stepIndex = 32,
+            maxSteps = Int.MAX_VALUE
+        )
+
+        assertTrue(warningStep.any { it.id == "context_budget_warning" })
+        assertTrue(criticalStep.any { it.id == "context_budget_critical" })
+    }
+
+    @Test
+    fun contextBudgetWarningsDoNotRepeatAfterThresholdCrossing() {
+        val warnings = RuntimeStepHealthMonitor.warningsForStep(
+            stepIndex = 23,
+            maxSteps = Int.MAX_VALUE
+        )
+
+        assertTrue(warnings.none { it.id == "context_budget_warning" })
+    }
 }

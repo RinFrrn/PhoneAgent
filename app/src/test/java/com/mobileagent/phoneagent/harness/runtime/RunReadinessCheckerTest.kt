@@ -46,6 +46,29 @@ class RunReadinessCheckerTest {
     }
 
     @Test
+    fun modelModeMismatchAppearsAsReadinessWarning() {
+        val report = RunReadinessChecker.evaluate(
+            modelConfigured = true,
+            accessibilityEnabled = true,
+            overlayEnabled = true,
+            notificationEnabled = true,
+            mode = Mode.VISION,
+            screenCaptureReady = true,
+            humanizationEnabled = false,
+            modelModeCheck = ReadinessCheck(
+                id = "model_mode_fit",
+                severity = ReadinessSeverity.WARNING,
+                title = "模型可能不适合当前模式",
+                detail = "当前模型不是明确的视觉模型"
+            )
+        )
+
+        assertTrue(report.ready)
+        assertEquals(listOf("model_mode_fit"), report.warnings.map { it.id })
+        assertTrue(report.statusDetail(running = false).contains("视觉模型"))
+    }
+
+    @Test
     fun humanizationEnabledIsReportedAsInfo() {
         val report = RunReadinessChecker.evaluate(
             modelConfigured = true,

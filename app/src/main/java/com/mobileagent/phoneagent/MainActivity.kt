@@ -51,6 +51,7 @@ import com.mobileagent.phoneagent.harness.runtime.RuntimeStatusUpdate
 import com.mobileagent.phoneagent.harness.runtime.RuntimeDiagnosticSnapshot
 import com.mobileagent.phoneagent.harness.runtime.RuntimeDiagnosticSnapshotBuilder
 import com.mobileagent.phoneagent.harness.runtime.RuntimeDeviceSnapshotReader
+import com.mobileagent.phoneagent.harness.runtime.ModelModeAdvisor
 import com.mobileagent.phoneagent.harness.runtime.RunReadinessChecker
 import com.mobileagent.phoneagent.harness.runtime.SystemPromptBuilder
 import com.mobileagent.phoneagent.harness.runtime.TaskRunController
@@ -340,7 +341,8 @@ class MainActivity : AppCompatActivity() {
             mode = selectedMode,
             screenCaptureReady = !visualMode || mediaProjection != null,
             humanizationEnabled = humanizationProfile.enabled,
-            deviceSnapshot = deviceSnapshot
+            deviceSnapshot = deviceSnapshot,
+            modelModeCheck = ModelModeAdvisor.readinessCheck(modelConfig, selectedMode)
         )
         val modelName = modelConfig.modelName.ifBlank { "未配置模型" }
         val modelLabel = if (modelConfig.displayName == modelName) {

@@ -58,7 +58,8 @@ object RunReadinessChecker {
         mode: Mode,
         screenCaptureReady: Boolean,
         humanizationEnabled: Boolean,
-        deviceSnapshot: RuntimeDeviceSnapshot? = null
+        deviceSnapshot: RuntimeDeviceSnapshot? = null,
+        modelModeCheck: ReadinessCheck? = null
     ): RunReadinessReport {
         val checks = mutableListOf<ReadinessCheck>()
 
@@ -116,6 +117,10 @@ object RunReadinessChecker {
                     detail = "当前模式会在开始任务时请求一次屏幕录制权限。"
                 )
             )
+        }
+
+        if (modelConfigured) {
+            modelModeCheck?.let(checks::add)
         }
 
         deviceSnapshot?.blockingWarnings().orEmpty().forEachIndexed { index, warning ->

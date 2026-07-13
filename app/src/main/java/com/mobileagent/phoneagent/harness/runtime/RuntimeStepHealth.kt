@@ -91,6 +91,23 @@ object RuntimeStepHealthMonitor {
                 )
             }
         }
+
+        estimatedContextUsage(stepIndex)?.let { usage ->
+            if (crossedContextPercent(usage.previousPercent, usage.currentPercent, CONTEXT_WARNING_PERCENT)) {
+                warnings += RuntimeWarning(
+                    id = "context_budget_warning",
+                    severity = RuntimeWarningSeverity.WARNING,
+                    message = "估算上下文已使用约 ${usage.currentPercent}%，后续应减少重复观察、压缩历史或尽快收敛到完成条件。"
+                )
+            }
+            if (crossedContextPercent(usage.previousPercent, usage.currentPercent, CONTEXT_CRITICAL_PERCENT)) {
+                warnings += RuntimeWarning(
+                    id = "context_budget_critical",
+                    severity = RuntimeWarningSeverity.CRITICAL,
+                    message = "估算上下文已使用约 ${usage.currentPercent}%，任务可能接近模型上下文上限；建议拆分任务、总结已完成内容或请求用户确认继续。"
+                )
+            }
+        }
         return warnings
     }
 
@@ -100,8 +117,38 @@ object RuntimeStepHealthMonitor {
         return previous < threshold && current >= threshold
     }
 
+    private fun crossedContextPercent(previousPercent: Int, currentPercent: Int, threshold: Int): Boolean {
+        return previousPercent < threshold && currentPercent >= threshold
+    }
+
+    private fun estimatedContextUsage(stepIndex: Int): EstimatedContextUsage? {
+        if (stepIndex <= 1) {
+            return null
+        }
+        val previousTokens = estimatedContextTokens(stepIndex - 1)
+        val currentTokens = estimatedContextTokens(stepIndex)
+        return EstimatedContextUsage(
+            previousPercent = ((previousTokens * 100) / CONTEXT_LIMIT_TOKENS).toInt(),
+            currentPercent = ((currentTokens * 100) / CONTEXT_LIMIT_TOKENS).toInt()
+        )
+    }
+
+    private fun estimatedContextTokens(stepIndex: Int): Long {
+        return BASE_CONTEXT_TOKENS + (stepIndex - 1L) * TOKENS_PER_STEP
+    }
+
+    private data class EstimatedContextUsage(
+        val previousPercent: Int,
+        val currentPercent: Int
+    )
+
     private const val LONG_TASK_STEP = 10
     private const val EXTREME_TASK_STEP = 30
     private const val WARNING_STEP_PERCENT = 70
     private const val CRITICAL_STEP_PERCENT = 90
+    private const val BASE_CONTEXT_TOKENS = 6_000L
+    private const val TOKENS_PER_STEP = 250L
+    private const val CONTEXT_LIMIT_TOKENS = 16_000L
+    private const val CONTEXT_WARNING_PERCENT = 70
+    private const val CONTEXT_CRITICAL_PERCENT = 85
 }
