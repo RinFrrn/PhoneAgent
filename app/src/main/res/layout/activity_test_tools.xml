@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
-    android:layout_height="match_parent">
+    android:layout_height="match_parent"
+    android:background="@color/app_background">
 
     <LinearLayout
         android:layout_width="match_parent"
@@ -83,7 +84,7 @@
             android:layout_height="240dp"
             android:layout_marginBottom="12dp"
             android:adjustViewBounds="true"
-            android:background="#EEEEEE"
+            android:background="@color/preview_surface"
             android:contentDescription="截图预览"
             android:scaleType="fitCenter" />
 
@@ -98,11 +99,12 @@
             android:id="@+id/tvTestLog"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:background="#F5F5F5"
+            android:background="@color/main_surface_variant"
             android:fontFamily="monospace"
             android:minHeight="240dp"
             android:padding="8dp"
             android:text="等待测试...\n"
+            android:textColor="?attr/colorOnSurface"
             android:textSize="12sp" />
 
         <Button

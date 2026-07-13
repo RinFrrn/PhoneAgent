@@ -139,17 +139,19 @@ class FileTraceStoreTest {
     @Test
     fun resumedSessionPersistsParentTraceLineage() {
         val store = FileTraceStore(temporaryFolder.root)
+        val sourceSessionId = "5e206830-bea2-4136-9b67-4bcb5e76e90d"
         val sessionId = store.openSession(
-            taskId = "task-resumed",
+            taskId = "task-1783945623914",
             taskGoal = "继续打开设置",
             mode = "ACCESSIBILITY",
-            resumedFromSessionId = "source-session",
+            resumedFromSessionId = sourceSessionId,
             resumeStrategy = TraceResumeStrategy.FRESH_OBSERVATION,
             resumedPriorStepCount = 4
         )
 
-        assertEquals("source-session", store.loadSession(sessionId)?.resumedFromSessionId)
-        assertEquals("source-session", store.loadRecentHistory().single().resumedFromSessionId)
+        assertEquals("task-1783945623914", store.loadSession(sessionId)?.taskId)
+        assertEquals(sourceSessionId, store.loadSession(sessionId)?.resumedFromSessionId)
+        assertEquals(sourceSessionId, store.loadRecentHistory().single().resumedFromSessionId)
         assertEquals(TraceResumeStrategy.FRESH_OBSERVATION, store.loadSession(sessionId)?.resumeStrategy)
         assertEquals(4, store.loadSession(sessionId)?.resumedPriorStepCount)
     }

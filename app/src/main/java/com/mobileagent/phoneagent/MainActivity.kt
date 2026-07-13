@@ -72,6 +72,7 @@ import com.mobileagent.phoneagent.harness.trace.TaskHistoryIndexHealthReport
 import com.mobileagent.phoneagent.harness.trace.TaskHistoryMaintenance
 import com.mobileagent.phoneagent.harness.trace.TaskHistoryStatus
 import com.mobileagent.phoneagent.harness.trace.TraceStorageInspector
+import com.mobileagent.phoneagent.harness.trace.TraceStorageStartup
 import com.mobileagent.phoneagent.model.ModelClient
 import com.mobileagent.phoneagent.service.AgentForegroundService
 import com.mobileagent.phoneagent.service.FloatingOverlayService
@@ -147,9 +148,24 @@ class MainActivity : AppCompatActivity() {
         setContentView(binding.root)
 
         setupViews()
+        refreshAfterTraceStartupMaintenance()
         checkPermissions()
         loadTaskFromPrefs() // 加载上次保存的任务
         handleTaskIntent(intent)
+    }
+
+    private fun refreshAfterTraceStartupMaintenance() {
+        val startup = TraceStorageStartup.startAsync(filesDir)
+        if (startup.isDone) {
+            return
+        }
+        startup.whenComplete { _, _ ->
+            binding.root.post {
+                if (!isFinishing && !isDestroyed) {
+                    renderMainUiState()
+                }
+            }
+        }
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -1447,7 +1463,7 @@ class MainActivity : AppCompatActivity() {
                 TextView(this).apply {
                     text = "暂无历史任务"
                     textSize = 12f
-                    setTextColor(ContextCompat.getColor(this@MainActivity, android.R.color.darker_gray))
+                    setTextColor(ContextCompat.getColor(this@MainActivity, R.color.app_on_surface_variant))
                 }
             )
             return

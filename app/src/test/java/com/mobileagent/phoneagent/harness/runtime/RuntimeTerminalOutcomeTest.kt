@@ -1,5 +1,6 @@
 package com.mobileagent.phoneagent.harness.runtime
 
+import com.mobileagent.phoneagent.agent.AgentRuntimeState
 import com.mobileagent.phoneagent.harness.act.ExecutionResult
 import com.mobileagent.phoneagent.harness.recover.FailureType
 import com.mobileagent.phoneagent.harness.trace.TaskHistoryStatus
@@ -8,6 +9,23 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 
 class RuntimeTerminalOutcomeTest {
+    @Test
+    fun stoppedRuntimeClosesAsTaskStopped() {
+        val decision = RuntimeTerminalOutcome.forInactiveState(AgentRuntimeState.STOPPED)
+
+        assertEquals(TaskHistoryStatus.STOPPED, decision.historyStatus)
+        assertEquals("任务被停止", decision.message)
+        assertEquals(FailureType.TASK_STOPPED, decision.failureType)
+    }
+
+    @Test
+    fun unexpectedInactiveRuntimeRemainsTypedFailure() {
+        val decision = RuntimeTerminalOutcome.forInactiveState(AgentRuntimeState.FAILED)
+
+        assertEquals(TaskHistoryStatus.FAILED, decision.historyStatus)
+        assertEquals(FailureType.UNKNOWN, decision.failureType)
+    }
+
     @Test
     fun successfulTerminationClosesAsSucceeded() {
         val decision = RuntimeTerminalOutcome.decide(

@@ -52,13 +52,14 @@ class LearnedSkillDetailActivity : AppCompatActivity() {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(16), dp(16), dp(16), dp(16))
+            setBackgroundColor(ContextCompat.getColor(this@LearnedSkillDetailActivity, R.color.app_background))
         }
 
         root.addView(
             TextView(this).apply {
                 text = skill.displayName
                 textSize = 22f
-                setTextColor(ContextCompat.getColor(this@LearnedSkillDetailActivity, android.R.color.black))
+                setTextColor(ContextCompat.getColor(this@LearnedSkillDetailActivity, R.color.app_on_surface))
                 setTypeface(typeface, android.graphics.Typeface.BOLD)
             }
         )
@@ -69,7 +70,7 @@ class LearnedSkillDetailActivity : AppCompatActivity() {
                 textSize = 13f
                 setLineSpacing(4f, 1f)
                 setPadding(0, dp(8), 0, dp(12))
-                setTextColor(ContextCompat.getColor(this@LearnedSkillDetailActivity, android.R.color.darker_gray))
+                setTextColor(ContextCompat.getColor(this@LearnedSkillDetailActivity, R.color.app_on_surface_variant))
             }
         )
 
@@ -137,7 +138,7 @@ class LearnedSkillDetailActivity : AppCompatActivity() {
             textSize = 12f
             setLineSpacing(3f, 1f)
             setPadding(dp(12), dp(10), dp(12), dp(10))
-            setTextColor(ContextCompat.getColor(this@LearnedSkillDetailActivity, android.R.color.black))
+            setTextColor(ContextCompat.getColor(this@LearnedSkillDetailActivity, R.color.app_on_surface))
             setBackgroundColor(ContextCompat.getColor(this@LearnedSkillDetailActivity, R.color.main_surface_variant))
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,

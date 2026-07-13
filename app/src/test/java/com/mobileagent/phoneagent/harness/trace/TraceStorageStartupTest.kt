@@ -97,7 +97,16 @@ class TraceStorageStartupTest {
     @Test
     fun startupClosesSessionsLeftRunningByPreviousProcess() {
         val store = FileTraceStore(temporaryFolder.root)
-        val sessionId = store.openSession("task-running", "打开设置", "HYBRID")
+        val taskId = "task-1783945075029"
+        val sourceSessionId = "5e206830-bea2-4136-9b67-4bcb5e76e90d"
+        val sessionId = store.openSession(
+            taskId = taskId,
+            taskGoal = "打开设置",
+            mode = "HYBRID",
+            resumedFromSessionId = sourceSessionId,
+            resumeStrategy = TraceResumeStrategy.FRESH_OBSERVATION,
+            resumedPriorStepCount = 3
+        )
         store.appendStep(
             sessionId,
             StepTrace(
@@ -124,10 +133,14 @@ class TraceStorageStartupTest {
         assertEquals(false, history.success)
         assertEquals(FailureType.RUNTIME_INTERRUPTED, history.failureType)
         assertEquals(recoveredAt, history.completedAt)
+        assertEquals(taskId, history.taskId)
+        assertEquals(sourceSessionId, history.resumedFromSessionId)
         assertNotNull(trace)
         assertEquals(TaskHistoryStatus.STOPPED, trace?.status)
         assertEquals(FailureType.RUNTIME_INTERRUPTED, trace?.failureType)
         assertEquals(1, trace?.totalSteps)
+        assertEquals(taskId, trace?.taskId)
+        assertEquals(sourceSessionId, trace?.resumedFromSessionId)
         assertTrue(trace?.outcomeMessage.orEmpty().contains("进程中断"))
 
         val health = TaskHistoryIndexHealthInspector.inspect(

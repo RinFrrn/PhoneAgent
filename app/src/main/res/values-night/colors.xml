@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="purple_500">#FFD0BCFF</color>
+    <color name="purple_700">#FFB69DF8</color>
+    <color name="app_background">#FF101114</color>
+    <color name="app_surface">#FF1B1C20</color>
+    <color name="app_on_surface">#FFE7E1E8</color>
+    <color name="app_on_surface_variant">#FFC7C5CC</color>
+    <color name="app_on_primary">#FF381E72</color>
+    <color name="app_status_bar">#FF2B0A4A</color>
+    <color name="main_surface_variant">#FF24262B</color>
+    <color name="main_card_stroke">#FF41444C</color>
+    <color name="preview_surface">#FF202226</color>
+</resources>

@@ -44,13 +44,14 @@ class LearnedSkillsActivity : AppCompatActivity() {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(16), dp(16), dp(16), dp(16))
+            setBackgroundColor(ContextCompat.getColor(this@LearnedSkillsActivity, R.color.app_background))
         }
 
         root.addView(
             TextView(this).apply {
                 text = "动态路径技能"
                 textSize = 22f
-                setTextColor(ContextCompat.getColor(this@LearnedSkillsActivity, android.R.color.black))
+                setTextColor(ContextCompat.getColor(this@LearnedSkillsActivity, R.color.app_on_surface))
                 setTypeface(typeface, android.graphics.Typeface.BOLD)
             }
         )
@@ -61,7 +62,7 @@ class LearnedSkillsActivity : AppCompatActivity() {
                 textSize = 13f
                 setLineSpacing(4f, 1f)
                 setPadding(0, dp(8), 0, dp(12))
-                setTextColor(ContextCompat.getColor(this@LearnedSkillsActivity, android.R.color.darker_gray))
+                setTextColor(ContextCompat.getColor(this@LearnedSkillsActivity, R.color.app_on_surface_variant))
             }
         )
 
@@ -97,7 +98,7 @@ class LearnedSkillsActivity : AppCompatActivity() {
                     text = "暂无动态技能。完成一个包含至少 2 个有效步骤的任务后会自动生成。"
                     textSize = 14f
                     setPadding(dp(12), dp(12), dp(12), dp(12))
-                    setTextColor(ContextCompat.getColor(this@LearnedSkillsActivity, android.R.color.darker_gray))
+                    setTextColor(ContextCompat.getColor(this@LearnedSkillsActivity, R.color.app_on_surface_variant))
                 }
             )
             return
@@ -141,7 +142,7 @@ class LearnedSkillsActivity : AppCompatActivity() {
                 textSize = 16f
                 maxLines = 2
                 setTypeface(typeface, Typeface.BOLD)
-                setTextColor(ContextCompat.getColor(this@LearnedSkillsActivity, android.R.color.black))
+                setTextColor(ContextCompat.getColor(this@LearnedSkillsActivity, R.color.app_on_surface))
                 layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
             }
         )
@@ -154,7 +155,7 @@ class LearnedSkillsActivity : AppCompatActivity() {
                 textSize = 12f
                 setLineSpacing(3f, 1f)
                 setPadding(0, dp(6), 0, dp(8))
-                setTextColor(ContextCompat.getColor(this@LearnedSkillsActivity, android.R.color.darker_gray))
+                setTextColor(ContextCompat.getColor(this@LearnedSkillsActivity, R.color.app_on_surface_variant))
             }
         )
 
@@ -202,7 +203,7 @@ class LearnedSkillsActivity : AppCompatActivity() {
         val textColor = if (enabled) {
             resolveThemeColor(com.google.android.material.R.attr.colorOnPrimary)
         } else {
-            ContextCompat.getColor(this, android.R.color.darker_gray)
+            ContextCompat.getColor(this, R.color.app_on_surface_variant)
         }
 
         return Chip(this).apply {

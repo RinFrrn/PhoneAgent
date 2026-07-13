@@ -10,6 +10,7 @@ import com.mobileagent.phoneagent.action.LaunchAction
 import com.mobileagent.phoneagent.harness.recover.FailureType
 import com.mobileagent.phoneagent.harness.trace.TaskNoteExtractor
 import com.mobileagent.phoneagent.skill.SkillActionInterceptor
+import kotlinx.coroutines.CancellationException
 
 interface ActionExecutor {
     suspend fun execute(request: ExecutionRequest): ExecutionResult
@@ -82,6 +83,8 @@ class DefaultActionExecutor(
             primaryResult
                 .toExecutionResult(humanized.actionJson, humanized.trace)
                 .withTerminalVerificationRequirement(action)
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Log.e(tag, "执行动作失败", e)
             ExecutionResult(

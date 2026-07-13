@@ -71,7 +71,7 @@ class FileTraceStore(
             modelDisplayName = TraceSanitizer.sanitizeNullableText(modelDisplayName),
             modelName = TraceSanitizer.sanitizeNullableText(modelName),
             modelBaseUrl = TraceSanitizer.sanitizeNullableText(modelBaseUrl),
-            resumedFromSessionId = TraceSanitizer.sanitizeNullableText(resumedFromSessionId),
+            resumedFromSessionId = resumedFromSessionId,
             resumeStrategy = resumeStrategy,
             resumedPriorStepCount = resumedPriorStepCount,
             startedAt = startedAt

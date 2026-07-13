@@ -4,7 +4,6 @@ import android.content.Context
 import android.os.SystemClock
 import android.util.Log
 import com.mobileagent.phoneagent.action.ActionResult
-import com.mobileagent.phoneagent.agent.AgentRuntimeState
 import com.mobileagent.phoneagent.agent.AgentSessionCoordinator
 import com.mobileagent.phoneagent.agent.AgentStateMachine
 import com.mobileagent.phoneagent.agent.FailureTracker
@@ -34,6 +33,7 @@ import com.mobileagent.phoneagent.harness.verify.VerificationResult
 import com.mobileagent.phoneagent.model.Message
 import com.mobileagent.phoneagent.skill.SkillRegistry
 import com.mobileagent.phoneagent.skill.SkillExecutionAdvisor
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 
 enum class RuntimePhase {
@@ -191,6 +191,8 @@ class HarnessRuntime(
                     } else {
                         planner.plan(taskSpec, observation, sessionMemory)
                     }
+                } catch (e: CancellationException) {
+                    throw e
                 } catch (e: Exception) {
                     planningMs = elapsedSince(planningStartedAt)
                     val timing = RuntimeStepTiming(
@@ -475,13 +477,12 @@ class HarnessRuntime(
             }
 
             if (!stateMachine.isActive()) {
-                val stoppedByUser = stateMachine.currentState() == AgentRuntimeState.STOPPED
-                val message = if (stoppedByUser) "任务被停止" else "任务失败"
+                val closure = RuntimeTerminalOutcome.forInactiveState(stateMachine.currentState())
                 traceStore.closeSession(
                     traceSessionId,
-                    status = if (stoppedByUser) TaskHistoryStatus.STOPPED else TaskHistoryStatus.FAILED,
-                    outcomeMessage = message,
-                    failureType = if (stoppedByUser) FailureType.TASK_STOPPED else FailureType.UNKNOWN
+                    status = closure.historyStatus,
+                    outcomeMessage = closure.message,
+                    failureType = closure.failureType
                 )
                 return
             }
@@ -500,6 +501,15 @@ class HarnessRuntime(
                 failureType = FailureType.MAX_STEPS_EXCEEDED
             )
             onComplete(TaskOutcome(false, message, traceSessionId))
+        } catch (e: CancellationException) {
+            val closure = RuntimeTerminalOutcome.forInactiveState(stateMachine.currentState())
+            traceStore.closeSession(
+                traceSessionId,
+                status = closure.historyStatus,
+                outcomeMessage = closure.message,
+                failureType = closure.failureType
+            )
+            throw e
         } catch (e: Exception) {
             traceStore.closeSession(
                 traceSessionId,
@@ -535,6 +545,8 @@ class HarnessRuntime(
         }
         return try {
             observationCollector.collect()
+        } catch (e: CancellationException) {
+            throw e
         } catch (_: Exception) {
             null
         }

@@ -20,6 +20,7 @@ import com.mobileagent.phoneagent.service.GestureDisplayBounds
 import com.mobileagent.phoneagent.service.PhoneAgentAccessibilityService
 import com.mobileagent.phoneagent.utils.AppLauncher
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeout
 
@@ -60,6 +61,8 @@ class ActionHandler(
             Log.d(TAG, "✅ 操作执行完成: success=${result.success}, finished=${result.shouldFinish}")
             Log.d(TAG, "========================================")
             result
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Log.e(TAG, "❌ 执行操作失败", e)
             e.printStackTrace()
