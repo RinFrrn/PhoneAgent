@@ -61,4 +61,14 @@ class UserInterventionOutcomeResolverTest {
 
         assertEquals(UserInterventionOutcome.CONTINUE, outcome)
     }
+
+    @Test
+    fun ordinaryQuestionTimeoutStopsWaitingInsteadOfSilentlyContinuing() {
+        val outcome = UserInterventionOutcomeResolver.resolve(
+            request = UserInteractionRequest(question = "是否选择张三？"),
+            response = UserActionResponse.timeout()
+        )
+
+        assertEquals(UserInterventionOutcome.TIMED_OUT, outcome)
+    }
 }

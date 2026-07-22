@@ -9,7 +9,12 @@ class FailureClassifier {
         val normalized = message.lowercase()
         return when {
             "402" in normalized || "insufficient_balance" in normalized || "balance" in normalized -> FailureType.MODEL_BALANCE
-            "401" in normalized || "unauthorized" in normalized || "invalid api key" in normalized -> FailureType.MODEL_AUTH
+            "401" in normalized ||
+                "403" in normalized ||
+                "unauthorized" in normalized ||
+                "forbidden" in normalized ||
+                "invalid api key" in normalized ||
+                "invalid_api_key" in normalized -> FailureType.MODEL_AUTH
             else -> FailureType.MODEL_REQUEST_FAILED
         }
     }
@@ -17,7 +22,10 @@ class FailureClassifier {
     fun classifyObservationFailure(message: String): FailureType {
         val normalized = message.lowercase()
         return when {
-            "权限" in message || "mediaprojection" in normalized -> FailureType.PERMISSION_MISSING
+            "权限" in message ||
+                "mediaprojection" in normalized ||
+                "permission denied" in normalized ||
+                "securityexception" in normalized -> FailureType.PERMISSION_MISSING
             else -> FailureType.OBSERVATION_FAILED
         }
     }

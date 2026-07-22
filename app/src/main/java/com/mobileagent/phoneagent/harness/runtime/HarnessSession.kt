@@ -12,6 +12,7 @@ import com.mobileagent.phoneagent.action.SwipeAction
 import com.mobileagent.phoneagent.action.TapAction
 import com.mobileagent.phoneagent.action.WaitAction
 import com.mobileagent.phoneagent.harness.observe.Observation
+import com.mobileagent.phoneagent.harness.recover.FailureType
 import com.mobileagent.phoneagent.harness.spec.TaskSpec
 import com.mobileagent.phoneagent.harness.verify.VerificationResult
 
@@ -20,6 +21,7 @@ data class HarnessSession(
     var stepCount: Int = 0
 ) {
     private val actionParser = ActionParser()
+    private val recoveryAttempts = mutableMapOf<FailureType, Int>()
 
     var lastPageFingerprint: String? = null
         private set
@@ -31,6 +33,34 @@ data class HarnessSession(
     fun nextStepIndex(): Int {
         stepCount += 1
         return stepCount
+    }
+
+    fun recordRecoveryFailure(failureType: FailureType): Int {
+        val attempt = recoveryAttempts.getOrDefault(failureType, 0) + 1
+        recoveryAttempts[failureType] = attempt
+        return attempt
+    }
+
+    fun resetRecoveryFailures(vararg failureTypes: FailureType) {
+        failureTypes.forEach(recoveryAttempts::remove)
+    }
+
+    fun resetExecutionRecoveryFailures() {
+        resetRecoveryFailures(
+            FailureType.ACTION_EXECUTION_FAILED,
+            FailureType.ACTION_NOT_EFFECTIVE,
+            FailureType.VERIFICATION_FAILED,
+            FailureType.APP_NOT_FOUND,
+            FailureType.APP_LAUNCH_BLOCKED,
+            FailureType.APP_LAUNCH_CONFIRMATION_REQUIRED,
+            FailureType.APP_LAUNCH_TARGET_NOT_REACHED,
+            FailureType.SENSITIVE_CONFIRMATION_REQUIRED,
+            FailureType.RECORDED_TARGET_MISSING,
+            FailureType.RECORDED_STATE_TIMEOUT,
+            FailureType.RECORDED_OBSTRUCTION_DETECTED,
+            FailureType.USER_TAKEOVER_REQUIRED,
+            FailureType.UNKNOWN
+        )
     }
 
     fun recordStepOutcome(

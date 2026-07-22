@@ -281,6 +281,9 @@ class PhoneAgent(
         record.runtimeWarnings.forEach { warning ->
             Log.d(TAG, "运行提示: [${warning.severity}] ${warning.message}")
         }
+        record.recovery?.let {
+            Log.d(TAG, "恢复路由: ${it.route}, attempt=${it.attempt}, reason=${it.reason}")
+        }
         record.execution?.failureType?.let { Log.d(TAG, "失败类型: $it") }
         record.errorMessage?.let { Log.d(TAG, "错误: $it") }
         Log.d(TAG, "========================================")
@@ -306,7 +309,10 @@ class PhoneAgent(
             verificationSummary = verification?.let {
                 "passed=${it.passed}, confidence=${it.confidence}, reason=${it.reason}"
             },
-            failureType = execution?.failureType?.name,
+            failureType = execution?.failureType?.name ?: recovery?.failureType?.name,
+            recoverySummary = recovery?.let {
+                "${it.route}, attempt=${it.attempt}${it.maxAttempts?.let { max -> "/$max" }.orEmpty()}, reason=${it.reason}"
+            },
             purpose = purpose,
             runtimeWarnings = runtimeWarnings.map { "[${it.severity}] ${it.message}" },
             taskNote = execution?.taskNote?.toDisplayText()
@@ -330,6 +336,7 @@ data class StepResult(
     val currentApp: String? = null,
     val verificationSummary: String? = null,
     val failureType: String? = null,
+    val recoverySummary: String? = null,
     val purpose: String? = null,
     val runtimeWarnings: List<String> = emptyList(),
     val taskNote: String? = null

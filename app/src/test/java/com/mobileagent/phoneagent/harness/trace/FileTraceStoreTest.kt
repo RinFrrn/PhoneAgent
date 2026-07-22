@@ -4,6 +4,8 @@ import com.mobileagent.phoneagent.harness.observe.Observation
 import com.mobileagent.phoneagent.harness.act.ExecutionResult
 import com.mobileagent.phoneagent.harness.plan.PlanDecision
 import com.mobileagent.phoneagent.harness.recover.FailureType
+import com.mobileagent.phoneagent.harness.recover.RecoveryRoute
+import com.mobileagent.phoneagent.harness.recover.RecoveryTrace
 import com.mobileagent.phoneagent.harness.runtime.StepStatus
 import com.mobileagent.phoneagent.harness.verify.VerificationResult
 import com.mobileagent.phoneagent.model.ContentItem
@@ -134,6 +136,50 @@ class FileTraceStoreTest {
         assertTrue(
             temporaryFolder.root.walkTopDown().none { file -> file.isFile && file.extension == "tmp" }
         )
+    }
+
+    @Test
+    fun recoveryDecisionIsPersistedWithTheFailedStep() {
+        val store = FileTraceStore(temporaryFolder.root)
+        val sessionId = store.openSession("task-recovery", "打开设置", "ACCESSIBILITY")
+        store.appendStep(
+            sessionId,
+            StepTrace(
+                stepIndex = 1,
+                timestamp = 123L,
+                status = StepStatus.OBSERVATION_FAILED,
+                observationBefore = Observation(
+                    currentApp = null,
+                    contentItems = emptyList(),
+                    failureMessage = "页面采集暂时失败"
+                ),
+                decision = null,
+                execution = null,
+                observationAfter = null,
+                verification = null,
+                errorMessage = "页面采集暂时失败",
+                failureType = FailureType.OBSERVATION_FAILED,
+                recovery = RecoveryTrace(
+                    route = RecoveryRoute.RETRY,
+                    failureType = FailureType.OBSERVATION_FAILED,
+                    attempt = 1,
+                    maxAttempts = 3,
+                    delayMs = 700L,
+                    reason = "瞬时页面采集失败，进行有界重试"
+                )
+            )
+        )
+
+        val recovery = requireNotNull(
+            FileTraceStore(temporaryFolder.root).loadSession(sessionId)
+        ).steps.single().recovery
+
+        requireNotNull(recovery)
+        assertEquals(RecoveryRoute.RETRY, recovery.route)
+        assertEquals(FailureType.OBSERVATION_FAILED, recovery.failureType)
+        assertEquals(1, recovery.attempt)
+        assertEquals(3, recovery.maxAttempts)
+        assertEquals(700L, recovery.delayMs)
     }
 
     @Test

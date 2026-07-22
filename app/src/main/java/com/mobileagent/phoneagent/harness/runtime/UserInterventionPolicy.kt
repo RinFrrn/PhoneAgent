@@ -15,11 +15,11 @@ object UserInterventionOutcomeResolver {
         request: UserInteractionRequest?,
         response: UserActionResponse
     ): UserInterventionOutcome {
-        if (request?.kind != UserInteractionKind.SENSITIVE_CONFIRMATION) {
-            return UserInterventionOutcome.CONTINUE
-        }
         if (response.timedOut) {
             return UserInterventionOutcome.TIMED_OUT
+        }
+        if (request?.kind != UserInteractionKind.SENSITIVE_CONFIRMATION) {
+            return UserInterventionOutcome.CONTINUE
         }
         return if (response.answer.isExplicitConfirmation()) {
             UserInterventionOutcome.CONTINUE

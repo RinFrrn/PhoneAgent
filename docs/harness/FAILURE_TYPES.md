@@ -32,4 +32,6 @@
 - Verification failures should not be merged into generic action failures.
 - Sensitive confirmations must stop on explicit denial, blank confirmation, or timeout.
 - Sessions left running by a process interruption must be closed as `RUNTIME_INTERRUPTED` during the next startup.
-- Failure types should support reporting first, then recovery policy.
+- Every runtime failure is routed through one of `RETRY`, `REPLAN`, `USER_INTERVENTION`, or `STOP`.
+- Transient observation and model-request failures use bounded retries; permission, authentication, and balance failures stop immediately.
+- Each recovery decision is persisted in step trace output with its route, failure type, attempt count, delay, and reason.

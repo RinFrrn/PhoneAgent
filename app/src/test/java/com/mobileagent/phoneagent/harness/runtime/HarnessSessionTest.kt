@@ -1,6 +1,7 @@
 package com.mobileagent.phoneagent.harness.runtime
 
 import com.mobileagent.phoneagent.harness.observe.Observation
+import com.mobileagent.phoneagent.harness.recover.FailureType
 import com.mobileagent.phoneagent.harness.spec.TaskSpec
 import com.mobileagent.phoneagent.harness.verify.VerificationResult
 import com.mobileagent.phoneagent.model.ContentItem
@@ -61,6 +62,20 @@ class HarnessSessionTest {
 
         assertFalse(result.ineffective)
         assertEquals(0, result.consecutiveIneffectiveActions)
+    }
+
+    @Test
+    fun recoveryAttemptsAreTypedAndResetAfterSuccess() {
+        val session = HarnessSession(taskSpec)
+
+        assertEquals(1, session.recordRecoveryFailure(FailureType.OBSERVATION_FAILED))
+        assertEquals(2, session.recordRecoveryFailure(FailureType.OBSERVATION_FAILED))
+        assertEquals(1, session.recordRecoveryFailure(FailureType.MODEL_REQUEST_FAILED))
+
+        session.resetRecoveryFailures(FailureType.OBSERVATION_FAILED)
+
+        assertEquals(1, session.recordRecoveryFailure(FailureType.OBSERVATION_FAILED))
+        assertEquals(2, session.recordRecoveryFailure(FailureType.MODEL_REQUEST_FAILED))
     }
 
     private fun page(text: String): Observation {

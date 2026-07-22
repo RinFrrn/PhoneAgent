@@ -54,6 +54,9 @@ object TraceSanitizer {
             observationAfter = step.observationAfter?.let { sanitizeObservation(it, sensitiveValues) },
             verification = step.verification?.let { sanitizeVerification(it, sensitiveValues) },
             errorMessage = step.errorMessage?.let { sanitizeRelatedText(it, sensitiveValues) },
+            recovery = step.recovery?.copy(
+                reason = sanitizeRelatedText(step.recovery.reason, sensitiveValues)
+            ),
             runtimeWarnings = step.runtimeWarnings.map { sanitizeWarning(it, sensitiveValues) }
         )
     }

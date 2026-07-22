@@ -42,6 +42,7 @@ object TaskLogFormatter {
             step.taskNote?.let { appendLine("任务笔记: $it") }
             step.verificationSummary?.let { appendLine("验证结果: $it") }
             step.failureType?.let { appendLine("失败类型: $it") }
+            step.recoverySummary?.let { appendLine("恢复路由: $it") }
             appendLine()
         }.trimEnd().let(LogSanitizer::sanitize)
     }
@@ -151,6 +152,13 @@ object TaskLogFormatter {
             }
             step.errorMessage?.let { appendLine("错误: $it") }
             step.failureType?.let { appendLine("失败类型: $it") }
+            step.recovery?.let { recovery ->
+                appendLine(
+                    "恢复路由: ${recovery.route}, failure=${recovery.failureType}, " +
+                        "attempt=${recovery.attempt}${recovery.maxAttempts?.let { "/$it" }.orEmpty()}, " +
+                        "delayMs=${recovery.delayMs}, reason=${recovery.reason}"
+                )
+            }
         }.trimEnd().let(LogSanitizer::sanitize)
     }
 

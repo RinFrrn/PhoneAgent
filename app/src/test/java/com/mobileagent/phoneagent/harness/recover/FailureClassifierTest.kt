@@ -74,6 +74,18 @@ class FailureClassifierTest {
         assertEquals(FailureType.SENSITIVE_CONFIRMATION_REQUIRED, failureType)
     }
 
+    @Test
+    fun classifyEnglishAuthAndPermissionFailures() {
+        assertEquals(
+            FailureType.MODEL_AUTH,
+            classifier.classifyModelFailure("Request failed: 403 forbidden")
+        )
+        assertEquals(
+            FailureType.PERMISSION_MISSING,
+            classifier.classifyObservationFailure("SecurityException: permission denied")
+        )
+    }
+
     private fun launchExecution(status: AppLaunchStatus, afterPackage: String): ExecutionResult {
         return ExecutionResult(
             success = false,

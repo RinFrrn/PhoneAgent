@@ -54,6 +54,8 @@ Replace the opaque agent loop with a runtime that can be verified, traced, and e
 46. Map supported standard key_event actions to Android accessibility global actions
 47. Parse commercial model response wrappers before action extraction
 48. Evaluate traces offline or through active eval
+49. Route failures through typed Retry, Replan, User Intervention, or Stop recovery decisions
+50. Persist recovery route, failure type, attempt count, delay, and reason in step traces
 
 ## Current Status
 
@@ -114,4 +116,4 @@ Replace the opaque agent loop with a runtime that can be verified, traced, and e
 - Recent model usage trend: done
 - Offline eval: done
 - Active eval runner: done
-- Structured recovery policy: pending
+- Structured recovery policy: done

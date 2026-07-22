@@ -22,6 +22,7 @@ import com.mobileagent.phoneagent.harness.plan.TaskPreprocessor
 import com.mobileagent.phoneagent.harness.recover.FailureClassifier
 import com.mobileagent.phoneagent.harness.recover.DefaultRecoveryPolicy
 import com.mobileagent.phoneagent.harness.recover.FailureType
+import com.mobileagent.phoneagent.harness.recover.RecoveryContext
 import com.mobileagent.phoneagent.harness.recover.RecoveryDecision
 import com.mobileagent.phoneagent.harness.spec.TaskSpec
 import com.mobileagent.phoneagent.harness.trace.StepTrace
@@ -121,9 +122,29 @@ class HarnessRuntime(
                     )
                 )
                 val observationStartedAt = SystemClock.elapsedRealtime()
-                val observation = observationCollector.collect()
+                val observation = try {
+                    observationCollector.collect()
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Observation(
+                        currentApp = null,
+                        contentItems = emptyList(),
+                        failureMessage = "页面观察异常: ${e.message ?: e::class.java.simpleName}"
+                    )
+                }
                 observationMs = elapsedSince(observationStartedAt)
                 if (observation.failureMessage != null) {
+                    val failureType = failureClassifier.classifyObservationFailure(observation.failureMessage)
+                    val recoveryContext = RecoveryContext(session.recordRecoveryFailure(failureType))
+                    val recoveryDecision = recoveryPolicy.decide(
+                        failureType = failureType,
+                        taskSpec = taskSpec,
+                        observation = observation,
+                        execution = null,
+                        context = recoveryContext
+                    )
+                    val recoveryTrace = recoveryDecision.toTrace(failureType, recoveryContext)
                     val timing = RuntimeStepTiming(
                         totalMs = elapsedSince(stepStartedAt),
                         observationMs = observationMs
@@ -137,6 +158,7 @@ class HarnessRuntime(
                         verification = null,
                         status = StepStatus.OBSERVATION_FAILED,
                         errorMessage = observation.failureMessage,
+                        recovery = recoveryTrace,
                         timing = timing,
                         runtimeWarnings = runtimeWarnings
                     )
@@ -152,23 +174,36 @@ class HarnessRuntime(
                             observationAfter = null,
                             verification = null,
                             errorMessage = observation.failureMessage,
-                            failureType = failureClassifier.classifyObservationFailure(observation.failureMessage),
+                            failureType = failureType,
+                            recovery = recoveryTrace,
                             timing = timing,
                             runtimeWarnings = runtimeWarnings
                         )
                     )
                     onStepRecord?.invoke(record)
+                    if (recoveryDecision.shouldRetry) {
+                        onStatusUpdate?.invoke(
+                            RuntimeStatusUpdate(
+                                status = "正在恢复观察",
+                                detail = "${recoveryDecision.userMessage}（${recoveryContext.attempt}/${recoveryDecision.maxAttempts}）",
+                                phase = RuntimePhase.OBSERVING
+                            )
+                        )
+                        delay(recoveryDecision.delayMs)
+                        continue
+                    }
                     stateMachine.markFailed()
-                    val message = observation.failureMessage
+                    val message = recoveryDecision.userMessage ?: observation.failureMessage
                     traceStore.closeSession(
                         traceSessionId,
                         status = TaskHistoryStatus.FAILED,
                         outcomeMessage = message,
-                        failureType = failureClassifier.classifyObservationFailure(observation.failureMessage)
+                        failureType = failureType
                     )
                     onComplete(TaskOutcome(false, message, traceSessionId))
                     return
                 }
+                session.resetRecoveryFailures(FailureType.OBSERVATION_FAILED)
 
                 sessionMemory.addObservation(observation.contentItems)
 
@@ -202,6 +237,16 @@ class HarnessRuntime(
                     )
                     val runtimeWarnings = stepWarnings + timing.warnings()
                     val message = "模型请求失败: ${e.message}"
+                    val failureType = failureClassifier.classifyModelFailure(message)
+                    val recoveryContext = RecoveryContext(session.recordRecoveryFailure(failureType))
+                    val recoveryDecision = recoveryPolicy.decide(
+                        failureType = failureType,
+                        taskSpec = taskSpec,
+                        observation = observation,
+                        execution = null,
+                        context = recoveryContext
+                    )
+                    val recoveryTrace = recoveryDecision.toTrace(failureType, recoveryContext)
                     val record = HarnessStepRecord(
                         stepIndex = stepIndex,
                         observation = observation,
@@ -210,6 +255,7 @@ class HarnessRuntime(
                         verification = null,
                         status = StepStatus.FAILED,
                         errorMessage = message,
+                        recovery = recoveryTrace,
                         timing = timing,
                         runtimeWarnings = runtimeWarnings
                     )
@@ -225,23 +271,38 @@ class HarnessRuntime(
                             observationAfter = null,
                             verification = null,
                             errorMessage = message,
-                            failureType = failureClassifier.classifyModelFailure(message),
+                            failureType = failureType,
+                            recovery = recoveryTrace,
                             timing = timing,
                             runtimeWarnings = runtimeWarnings
                         )
                     )
                     onStepRecord?.invoke(record)
+                    if (recoveryDecision.shouldRetry) {
+                        sessionMemory.removeImageFromLastUserMessage()
+                        onStatusUpdate?.invoke(
+                            RuntimeStatusUpdate(
+                                status = "正在恢复模型请求",
+                                detail = "${recoveryDecision.userMessage}（${recoveryContext.attempt}/${recoveryDecision.maxAttempts}）",
+                                phase = RuntimePhase.MODEL_GENERATING
+                            )
+                        )
+                        delay(recoveryDecision.delayMs)
+                        continue
+                    }
                     stateMachine.markFailed()
+                    val outcomeMessage = recoveryDecision.userMessage ?: message
                     traceStore.closeSession(
                         traceSessionId,
                         status = TaskHistoryStatus.FAILED,
-                        outcomeMessage = message,
-                        failureType = failureClassifier.classifyModelFailure(message)
+                        outcomeMessage = outcomeMessage,
+                        failureType = failureType
                     )
-                    onComplete(TaskOutcome(false, message, traceSessionId))
+                    onComplete(TaskOutcome(false, outcomeMessage, traceSessionId))
                     return
                 }
                 planningMs = elapsedSince(planningStartedAt)
+                session.resetRecoveryFailures(FailureType.MODEL_REQUEST_FAILED)
 
                 onStatusUpdate?.invoke(
                     RuntimeStatusUpdate(
@@ -287,12 +348,12 @@ class HarnessRuntime(
                     after = afterObservation,
                     verification = verification
                 )
-                val baseFailureType = execution.failureType
-                    ?: failureClassifier.classifyExecutionFailure(execution, verification)
-                val effectiveFailureType = if (stagnation.ineffective) {
-                    FailureType.ACTION_NOT_EFFECTIVE
-                } else {
-                    baseFailureType
+                val executionSucceeded = execution.success && verification.passed
+                val effectiveFailureType = when {
+                    stagnation.ineffective -> FailureType.ACTION_NOT_EFFECTIVE
+                    executionSucceeded -> null
+                    execution.failureType != null -> execution.failureType
+                    else -> failureClassifier.classifyExecutionFailure(execution, verification)
                 }
                 val stagnationTakeover = stagnation.ineffective &&
                     stagnation.consecutiveIneffectiveActions >= TAKEOVER_AFTER_INEFFECTIVE
@@ -302,12 +363,28 @@ class HarnessRuntime(
                     stagnation = stagnation
                 )
                 var effectiveExecution = execution.copy(
-                    success = execution.success && verification.passed,
+                    success = executionSucceeded,
                     message = effectiveMessage,
                     requiresTakeover = execution.requiresTakeover || stagnationTakeover,
                     failureType = effectiveFailureType
                 )
-                val recoveryDecision = applyRecoveryDecision(taskSpec, observation, effectiveExecution)
+                val recoveryContext = effectiveFailureType?.let {
+                    RecoveryContext(session.recordRecoveryFailure(it))
+                }
+                if (effectiveFailureType == null) {
+                    session.resetExecutionRecoveryFailures()
+                }
+                val recoveryDecision = applyRecoveryDecision(
+                    taskSpec = taskSpec,
+                    observation = observation,
+                    execution = effectiveExecution,
+                    recoveryContext = recoveryContext
+                )
+                val recoveryTrace = if (effectiveFailureType != null && recoveryContext != null) {
+                    recoveryDecision.toTrace(effectiveFailureType, recoveryContext)
+                } else {
+                    null
+                }
                 if (recoveryDecision.requiresUserTakeover || recoveryDecision.userMessage != null) {
                     effectiveExecution = effectiveExecution.copy(
                         requiresTakeover = effectiveExecution.requiresTakeover || recoveryDecision.requiresUserTakeover,
@@ -397,7 +474,7 @@ class HarnessRuntime(
                                 success = false,
                                 requiresTakeover = false,
                                 failureType = interventionFailureType,
-                                message = "等待用户明确确认超时，敏感任务已停止。"
+                                message = "等待用户输入超时，任务已停止。"
                             )
                         }
                     }
@@ -405,6 +482,7 @@ class HarnessRuntime(
                 }
 
                 val terminalRequested = interventionFailureType != null ||
+                    recoveryDecision.stopTask ||
                     execution.shouldFinish ||
                     decision.finishRequested
                 val terminalDecision = RuntimeTerminalOutcome.decide(
@@ -434,6 +512,7 @@ class HarnessRuntime(
                         } else {
                             null
                         },
+                        recovery = recoveryTrace,
                         timing = timing,
                         runtimeWarnings = runtimeWarnings
                     )
@@ -448,6 +527,7 @@ class HarnessRuntime(
                         verification = verification,
                         status = status,
                         errorMessage = if (status == StepStatus.FAILED) effectiveExecution.message else null,
+                        recovery = recoveryTrace,
                         timing = timing,
                         runtimeWarnings = runtimeWarnings
                     )
@@ -627,14 +707,17 @@ class HarnessRuntime(
     private fun applyRecoveryDecision(
         taskSpec: TaskSpec,
         observation: Observation,
-        execution: ExecutionResult
+        execution: ExecutionResult,
+        recoveryContext: RecoveryContext?
     ): RecoveryDecision {
         val failureType = execution.failureType ?: return RecoveryDecision()
+        val context = recoveryContext ?: return RecoveryDecision()
         val decision = recoveryPolicy.decide(
             failureType = failureType,
             taskSpec = taskSpec,
             observation = observation,
-            execution = execution
+            execution = execution,
+            context = context
         )
         decision.userMessage?.let { sessionMemory.add(Message("user", it)) }
         if (decision.stopTask) {

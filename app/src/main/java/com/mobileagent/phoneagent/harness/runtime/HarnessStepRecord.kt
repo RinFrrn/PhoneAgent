@@ -3,6 +3,7 @@ package com.mobileagent.phoneagent.harness.runtime
 import com.mobileagent.phoneagent.harness.act.ExecutionResult
 import com.mobileagent.phoneagent.harness.observe.Observation
 import com.mobileagent.phoneagent.harness.plan.PlanDecision
+import com.mobileagent.phoneagent.harness.recover.RecoveryTrace
 import com.mobileagent.phoneagent.harness.verify.VerificationResult
 
 enum class StepStatus {
@@ -21,6 +22,7 @@ data class HarnessStepRecord(
     val verification: VerificationResult?,
     val status: StepStatus,
     val errorMessage: String? = null,
+    val recovery: RecoveryTrace? = null,
     val timing: RuntimeStepTiming? = null,
     val runtimeWarnings: List<RuntimeWarning> = emptyList()
 )
